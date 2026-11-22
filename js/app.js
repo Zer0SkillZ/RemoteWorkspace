@@ -1,4 +1,4 @@
-/* RPG Design Forge — class, item and spell design tool.
+/* Ascension Of The Explorers Game Development — class, item and spell design tool.
  * Plain JavaScript, no build step. Data lives in localStorage and can be
  * exported/imported as JSON or exported as Markdown.
  */
@@ -1571,7 +1571,7 @@ function toMarkdown(tab, e) {
 function allToMarkdown() {
   const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
   const demote = (md) => md.replace(/^(#{1,5}) /gm, '#$1 ');
-  const parts = ['# RPG Design Forge Export', `*Exported ${new Date().toLocaleString()}*`, ''];
+  const parts = ['# Ascension Of The Explorers Game Development Export', `*Exported ${new Date().toLocaleString()}*`, ''];
   const ov = db.lore.magicOverview;
   if (ov.text) parts.push(`# ${ov.title || 'Magic Overview'}`, '', para(ov.text));
   [['Classes', 'classes'], ['Items', 'items'], ['Weapons', 'weapons'], ['Weapon Traits', 'traits'], ['Mech Modules', 'modules'], ['Schools of Magic', 'schools'], ['Spells', 'spells'], ['Rules', 'rules']].forEach(([title, key]) => {
@@ -1693,7 +1693,7 @@ function importJson(file) {
       render();
       notify(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules, ${counts.weapons} weapons, ${counts.traits} weapon traits, ${counts.modules} modules. Entries with matching IDs were overwritten.`);
     } catch (e) {
-      notify('That file could not be read as RPG Design Forge JSON. ' + e.message, 'Import failed');
+      notify('That file could not be read as Ascension Of The Explorers Game Development JSON. ' + e.message, 'Import failed');
     }
   };
   reader.readAsText(file);
@@ -1724,10 +1724,10 @@ document.getElementById('editor').addEventListener('click', async (ev) => {
   }
 });
 document.getElementById('btn-export-json').addEventListener('click', () => {
-  download(`rpg-forge-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(db, null, 2), 'application/json');
+  download(`aote-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(db, null, 2), 'application/json');
 });
 document.getElementById('btn-export-md').addEventListener('click', () => {
-  download(`rpg-forge-${new Date().toISOString().slice(0, 10)}.md`, allToMarkdown(), 'text/markdown');
+  download(`aote-${new Date().toISOString().slice(0, 10)}.md`, allToMarkdown(), 'text/markdown');
 });
 document.getElementById('file-import').addEventListener('change', (ev) => {
   const f = ev.target.files[0];

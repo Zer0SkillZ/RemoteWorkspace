@@ -249,3 +249,6 @@ details.variant > summary { cursor: pointer; display: flex; gap: 8px; align-item
 .modal-actions .muted { margin-right: auto; }
 button.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
 button:focus-visible, .button:focus-within, summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+.brand { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; line-height: 1.2; }
+.brand-sub { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
