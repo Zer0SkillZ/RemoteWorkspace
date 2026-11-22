@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #15131a;
   --panel: #1e1b25;
   --panel-2: #26222f;
@@ -229,3 +230,22 @@ details.node .node-body { padding: 4px 14px 14px; }
 .subcard.tier-greater { border-left: 3px solid var(--accent); }
 details.variant > summary { cursor: pointer; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .tabs { flex-wrap: wrap; }
+
+/* in-page dialogs */
+.modal-back {
+  position: fixed; inset: 0; z-index: 100; background: rgba(8, 6, 12, .7);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; width: min(460px, 100%); max-height: 90vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+.modal.wide { width: min(820px, 100%); }
+.modal h2 { margin: 0; font-size: 18px; color: var(--accent); }
+.modal-msg { margin: 0; white-space: pre-wrap; }
+.modal-text { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; min-height: 260px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+.modal-actions .muted { margin-right: auto; }
+button.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+button:focus-visible, .button:focus-within, summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }

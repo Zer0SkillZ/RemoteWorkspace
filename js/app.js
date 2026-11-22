@@ -392,6 +392,65 @@ function checkbox(label, obj, key, onChange, disabledReason) {
   return h('label', { class: 'check' + (input.disabled ? ' disabled' : ''), title: input.disabled ? disabledReason : null }, input, label);
 }
 
+/* In-page dialogs. Browser alert/confirm/prompt are blocked when the app is
+ * hosted inside another page (e.g. a claude.ai artifact), so we draw our own. */
+const IN_FRAME = (() => { try { return window.self !== window.top; } catch { return true; } })();
+
+function modal(build) {
+  return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
+    const back = h('div', { class: 'modal-back' });
+    const box = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
+    const close = (v) => { back.remove(); document.removeEventListener('keydown', onKey); if (prevFocus && prevFocus.focus) prevFocus.focus(); resolve(v); };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(false); };
+    document.addEventListener('keydown', onKey);
+    back.addEventListener('click', (ev) => { if (ev.target === back) close(false); });
+    build(box, close);
+    back.append(box);
+    document.body.append(back);
+    const focusEl = box.querySelector('[data-autofocus]') || box.querySelector('button');
+    if (focusEl) focusEl.focus();
+  });
+}
+
+/** Ask a yes/no question in the page. Resolves true/false. */
+function askConfirm(message, { ok = 'OK', cancel = 'Cancel', danger = false, title = '' } = {}) {
+  return modal((box, close) => box.append(
+    title ? h('h2', {}, title) : null,
+    h('p', { class: 'modal-msg' }, message),
+    h('div', { class: 'modal-actions' },
+      h('button', { onclick: () => close(false) }, cancel),
+      h('button', { class: danger ? 'danger-solid' : 'primary', 'data-autofocus': '', onclick: () => close(true) }, ok))));
+}
+
+/** Show a message in the page. */
+function notify(message, title = '') {
+  return modal((box, close) => box.append(
+    title ? h('h2', {}, title) : null,
+    h('p', { class: 'modal-msg' }, message),
+    h('div', { class: 'modal-actions' }, h('button', { class: 'primary', 'data-autofocus': '', onclick: () => close(true) }, 'OK'))));
+}
+
+/** Show text the user can copy (used for exports where downloads are blocked). */
+function showText(title, text, hint = '') {
+  return modal((box, close) => {
+    const ta = h('textarea', { class: 'modal-text', readonly: true, rows: 16 });
+    ta.value = text;
+    const status = h('span', { class: 'muted' });
+    box.classList.add('wide');
+    box.append(
+      h('h2', {}, title),
+      hint ? h('p', { class: 'hint' }, hint) : null,
+      ta,
+      h('div', { class: 'modal-actions' }, status,
+        h('button', { onclick: () => close(true) }, 'Close'),
+        h('button', { class: 'primary', 'data-autofocus': '', onclick: async () => {
+          try { await navigator.clipboard.writeText(text); status.textContent = 'Copied ✓'; }
+          catch { ta.focus(); ta.select(); status.textContent = 'Press Ctrl+C (⌘C) to copy the selected text.'; }
+        } }, 'Copy all')));
+  });
+}
+
 function moveInArray(arr, idx, dir) {
   const j = idx + dir;
   if (j < 0 || j >= arr.length) return;
@@ -540,10 +599,10 @@ function duplicateEntry(e) {
   copy.name = `${e.name} (copy)`;
   addEntry(ui.tab === 'classes' ? normalizeClass(copy) : copy);
 }
-function deleteEntry(e) {
+async function deleteEntry(e) {
   const used = ui.tab === 'schools' ? spellsInSchool(e.name).length : 0;
   const extra = used ? `\n\n${used} spell(s) use this school and will be left with an unknown school.` : '';
-  if (!confirm(`Delete "${e.name}"? This cannot be undone (unless you have a JSON backup).${extra}`)) return;
+  if (!await askConfirm(`Delete "${e.name}"? This cannot be undone (unless you have a JSON backup).${extra}`, { ok: 'Delete', danger: true })) return;
   db[ui.tab] = db[ui.tab].filter((x) => x.id !== e.id);
   if (ui.tab === 'rules') db.rules.forEach((r) => { r.related = r.related.filter((id) => id !== e.id); });
   ui.selected[ui.tab] = null;
@@ -560,10 +619,10 @@ function nodeTypesFor(kind) {
   return kind === 'noncombat' ? s.nodeTypes.filter((t) => !s.attackNodeTypes.includes(t)) : s.nodeTypes.slice();
 }
 
-function changeClassKind(c, kind) {
+async function changeClassKind(c, kind) {
   const newMax = maxLevel(kind);
   const lost = c.nodes.slice(newMax).filter((n) => n.name || n.description || n.isFractured || n.isAugment);
-  if (lost.length && !confirm(`Switching to ${CLASS_KINDS[kind].label} keeps only ${newMax} levels. ${lost.length} filled-in node(s) above level ${newMax} will be removed. Continue?`)) {
+  if (lost.length && !await askConfirm(`Switching to ${CLASS_KINDS[kind].label} keeps only ${newMax} levels. ${lost.length} filled-in node(s) above level ${newMax} will be removed.`, { ok: 'Switch and remove', danger: true })) {
     render();
     return;
   }
@@ -672,8 +731,8 @@ function renderClassEditor(c) {
   return wrap;
 }
 
-function removeAugmentation(c, a) {
-  if (!confirm(`Remove augmentation path "${a.name || 'unnamed'}"? Its variants on every node are removed too.`)) return;
+async function removeAugmentation(c, a) {
+  if (!await askConfirm(`Remove augmentation path "${a.name || 'unnamed'}"? Its variants on every node are removed too.`, { ok: 'Remove', danger: true })) return;
   c.augmentations = c.augmentations.filter((x) => x.id !== a.id);
   c.nodes.forEach((n) => { n.augments = n.augments.filter((v) => v.augId !== a.id); });
   touch();
@@ -798,7 +857,7 @@ function renderFracturePath(c, n, p, pi) {
       h('span', { class: 'badge cost' }, `Path total ${fmt(pathCost(p))} Asc`),
       h('button', { class: 'small', title: 'Move up', onclick: () => { moveInArray(n.fracturePaths, pi, -1); touch(); render(); } }, '↑'),
       h('button', { class: 'small', title: 'Move down', onclick: () => { moveInArray(n.fracturePaths, pi, 1); touch(); render(); } }, '↓'),
-      h('button', { class: 'small danger', onclick: () => { if (confirm('Remove this fracture path?')) { n.fracturePaths.splice(pi, 1); touch(); render(); } } }, 'Remove path')),
+      h('button', { class: 'small danger', onclick: async () => { if (await askConfirm('Remove this fracture path and all its fractures?', { ok: 'Remove', danger: true })) { n.fracturePaths.splice(pi, 1); touch(); render(); } } }, 'Remove path')),
     h('div', { class: 'row' }, field('Path name', p, 'name', { placeholder: 'e.g. Shield' }), field('Path theme', p, 'description', { placeholder: 'How this path modifies the node' })));
 
   p.fractures.forEach((f, fi) => {
@@ -1346,12 +1405,12 @@ function renderSettings() {
       h('h2', {}, 'Data'),
       h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${total}, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools.`),
       h('div', { class: 'row' },
-        h('button', { onclick: () => { if (confirm('Add an example item and spell?')) { const ex = exampleContent(); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
+        h('button', { onclick: async () => { if (await askConfirm('Add an example item and spell?', { ok: 'Add examples' })) { const ex = exampleContent(); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
         h('button', { class: 'danger', onclick: resetAll }, 'Reset ALL data'))));
 }
 
-function reloadSeed() {
-  if (!confirm('Overwrite imported classes, rules, weapons, traits and modules with the versions from your notes? Edits you made to those entries will be lost (entries you created yourself are kept).')) return;
+async function reloadSeed() {
+  if (!await askConfirm('Overwrite imported classes, rules, weapons, traits and modules with the versions from your notes? Edits you made to those entries will be lost (entries you created yourself are kept).', { ok: 'Reload', danger: true })) return;
   const seed = normalizeDb(Object.assign({}, seedContent(), { schools: db.schools }));
   let n = 0;
   SEEDED_COLLECTIONS.forEach((key) => {
@@ -1363,12 +1422,11 @@ function reloadSeed() {
   });
   save();
   render();
-  alert(`Reloaded ${n} entries from the notes.`);
+  notify(`Reloaded ${n} entries from the notes.`);
 }
 
-function resetAll() {
-  if (!confirm('Reset ALL data to the starter content? Everything you added or changed is lost. Export a JSON backup first if unsure.')) return;
-  if (!confirm('Really reset everything?')) return;
+async function resetAll() {
+  if (!await askConfirm('Reset ALL data to the starter content? Everything you added or changed is lost. Export a JSON backup first if unsure.', { ok: 'Reset everything', danger: true, title: 'Reset all data' })) return;
   db = emptyDb();
   ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null, weapons: null, traits: null, modules: null };
   save();
@@ -1594,6 +1652,12 @@ function mdToHtml(md) {
 const slug = (s) => (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'untitled';
 
 function download(filename, text, mime = 'text/plain') {
+  if (IN_FRAME) {
+    // Hosted pages can't start downloads: show the text to copy instead.
+    const what = mime.includes('json') ? 'Paste it into a .json file to keep a backup, or into Import JSON on another device.' : 'Paste it into a document or a .md file.';
+    showText(filename, text, `Downloads are blocked on this hosted page. Copy the text below. ${what}`);
+    return;
+  }
   const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = h('a', { href: url, download: filename });
   document.body.append(a);
@@ -1607,13 +1671,13 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     setStatus('Copied to clipboard ✓');
   } catch {
-    prompt('Copy this text:', text);
+    showText('Copy this text', text);
   }
 }
 
 function importJson(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const incoming = normalizeDb(JSON.parse(reader.result));
       const counts = { classes: 0, items: 0, spells: 0, schools: 0, rules: 0, weapons: 0, traits: 0, modules: 0 };
@@ -1624,12 +1688,12 @@ function importJson(file) {
           counts[key]++;
         });
       });
-      if (confirm('Also replace your Settings (lists & costs) and Magic Overview with the ones from this file?')) { db.settings = incoming.settings; db.lore = incoming.lore; }
+      if (await askConfirm('Also replace your Settings (lists & costs) and Magic Overview with the ones from this file?', { ok: 'Replace settings', cancel: 'Keep mine' })) { db.settings = incoming.settings; db.lore = incoming.lore; }
       save();
       render();
-      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules, ${counts.weapons} weapons, ${counts.traits} weapon traits, ${counts.modules} modules. Entries with matching IDs were overwritten.`);
+      notify(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules, ${counts.weapons} weapons, ${counts.traits} weapon traits, ${counts.modules} modules. Entries with matching IDs were overwritten.`);
     } catch (e) {
-      alert('That file could not be read as RPG Design Forge JSON.\n\n' + e.message);
+      notify('That file could not be read as RPG Design Forge JSON. ' + e.message, 'Import failed');
     }
   };
   reader.readAsText(file);
@@ -1644,14 +1708,14 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
   ui.search = '';
   render();
 }));
-document.getElementById('editor').addEventListener('click', (ev) => {
+document.getElementById('editor').addEventListener('click', async (ev) => {
   const a = ev.target.closest('.rule-link');
   if (!a) return;
   ev.preventDefault();
   const name = a.dataset.rule;
   const rule = findRuleByName(name);
   if (rule) { openRule(rule); return; }
-  if (confirm(`There's no rule called "${name}". Create it now?`)) {
+  if (await askConfirm(`There's no rule called "${name}". Create it now?`, { ok: 'Create rule' })) {
     const r = newRule();
     r.name = name;
     db.rules.push(r);
