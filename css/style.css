@@ -252,3 +252,20 @@ button:focus-visible, .button:focus-within, summary:focus-visible { outline: 2px
 
 .brand { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; line-height: 1.2; }
 .brand-sub { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+
+/* class preview: collapsible Core Nodes */
+.pv-nodes-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: 28px; padding-bottom: 4px; }
+.pv-nodes-head h2 { margin: 0 auto 0 0; border: none; padding: 0; }
+.pv-nodes { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 8px; }
+details.pv-node { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); }
+details.pv-node[open] { border-color: var(--accent-2); }
+details.pv-node > summary {
+  list-style: none; cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+details.pv-node > summary::-webkit-details-marker { display: none; }
+details.pv-node > summary::before { content: "▸"; color: var(--muted); font-weight: 400; }
+details.pv-node[open] > summary::before { content: "▾"; }
+details.pv-node.empty > summary { color: var(--muted); font-style: italic; font-weight: 400; }
+.pv-node-body { padding: 0 18px 12px; border-top: 1px solid var(--border); }
+.pv-node-body > :first-child { margin-top: 12px; }

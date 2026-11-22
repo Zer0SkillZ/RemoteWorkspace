@@ -245,7 +245,7 @@ function load() {
   } catch (e) {
     console.error('Failed to load saved data', e);
   }
-  return emptyDb();
+  return normalizeDb(null);
 }
 
 let saveTimer = null;
@@ -583,7 +583,7 @@ function renderEditor() {
     h('button', { class: 'danger', onclick: () => deleteEntry(e) }, 'Delete'),
   );
   let body;
-  if (ui.mode === 'preview') body = h('div', { class: 'preview', html: mdToHtml(toMarkdown(ui.tab, e)) });
+  if (ui.mode === 'preview') body = ui.tab === 'classes' ? renderClassPreview(e) : h('div', { class: 'preview', html: mdToHtml(toMarkdown(ui.tab, e)) });
   else if (ui.tab === 'classes') body = renderClassEditor(e);
   else if (ui.tab === 'items') body = renderItemEditor(e);
   else if (ui.tab === 'schools') body = renderSchoolEditor(e);
@@ -757,21 +757,9 @@ function renderCostSection(c) {
 
 const nodeKey = (c, n) => `${c.id}:node:${n.level}`;
 
+/** The bar of a collapsed node shows only the node's name. */
 function nodeSummary(c, n) {
-  const types = nodeTypesFor(c.kind);
-  const bits = [
-    h('span', { class: 'lvl' }, `Lv ${n.level}`),
-    h('span', { class: 'node-title' + (n.name ? '' : ' empty') }, n.name || 'Unnamed node'),
-  ];
-  if (n.type) bits.push(h('span', { class: 'badge type' }, n.type));
-  if (n.type && !types.includes(n.type)) bits.push(h('span', { class: 'badge warn', title: 'This type is not in the node type list for this class type' }, '⚠ type'));
-  if (n.cost) bits.push(h('span', { class: 'badge' }, n.cost.length > 34 ? n.cost.slice(0, 32) + '…' : n.cost));
-  if (n.isAugment) bits.push(h('span', { class: 'badge aug' }, `Augment ×${n.augments.filter((v) => c.augmentations.some((a) => a.id === v.augId) && (v.name || v.description)).length}`));
-  if (n.isFractured) bits.push(h('span', { class: 'badge frac' }, `Fractured · ${n.fracturePaths.length} path(s)`));
-  if (n.isAugment && n.isFractured) bits.push(h('span', { class: 'badge warn' }, '⚠ augment + fractured'));
-  if (n.notes) bits.push(h('span', { class: 'badge note', title: n.notes }, '✎ note'));
-  if (!n.name && !n.description) bits.push(h('span', { class: 'badge' }, 'empty'));
-  return bits;
+  return [h('span', { class: 'node-title' + (n.name ? '' : ' empty') }, n.name || `Level ${n.level} — unnamed`)];
 }
 
 /** Update node summary lines + cost tiles without rebuilding open forms. */
@@ -1427,7 +1415,7 @@ async function reloadSeed() {
 
 async function resetAll() {
   if (!await askConfirm('Reset ALL data to the starter content? Everything you added or changed is lost. Export a JSON backup first if unsure.', { ok: 'Reset everything', danger: true, title: 'Reset all data' })) return;
-  db = emptyDb();
+  db = normalizeDb(null);
   ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null, weapons: null, traits: null, modules: null };
   save();
   render();
@@ -1458,9 +1446,8 @@ function orderedFractures(p) {
   return out;
 }
 
-function classToMd(c) {
+function classHeadMd(c) {
   const out = [];
-  const k = classCosts(c);
   out.push(`# ${c.name}`, `*${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} Core Nodes*`, '');
   if (c.summary) out.push(`**${c.summary}**`, '');
   if (c.identity) out.push('## Class Identity', '', para(c.identity));
@@ -1478,49 +1465,62 @@ function classToMd(c) {
     c.augmentations.forEach((a) => out.push(`### ${a.name || 'Unnamed Path'}`, para(a.philosophy)));
   }
 
-  out.push('## Core Nodes', '');
-  c.nodes.slice(0, maxLevel(c.kind)).forEach((n) => {
-    const tags = [n.isAugment ? 'Augmentation Node' : '', n.isFractured ? 'Fracture Node' : ''].filter(Boolean);
-    if (!n.name && !n.description && !tags.length) {
-      out.push(`### ${n.level}. *Not written yet*`, '');
-      return;
-    }
-    out.push(`### ${n.level}. ${n.name || 'Unnamed'}${tags.length ? ` · [${tags.join(', ')}]` : ''}`);
-    if (n.flavor) out.push(`*${n.flavor}*`, '');
-    const meta = [n.type && `*${n.type}*`, n.cost && n.cost !== n.type && `**${n.cost}**`].filter(Boolean).join(' · ');
-    if (meta) out.push(meta, '');
-    if (n.description) out.push(n.description.trim(), '');
-    if (n.grants) out.push('**In addition:**', n.grants.trim(), '');
-    if (n.isAugment) {
-      c.augmentations.forEach((a) => {
-        const v = n.augments.find((x) => x.augId === a.id);
-        if (!v || !(v.name || v.description)) return;
-        out.push(`#### ◆ ${a.name || 'Augmentation'}${v.name ? `: ${v.name}` : ''}`);
-        if (v.tagline) out.push(`*${v.tagline}*`, '');
-        const vmeta = [v.type && v.type !== n.type && `*${v.type}*`, v.cost && `**${v.cost}**`].filter(Boolean).join(' · ');
-        if (vmeta) out.push(vmeta, '');
-        if (v.appearance) out.push(...v.appearance.trim().split('\n').filter((l) => l.trim()).map((l) => `> ${l}`), '');
-        if (v.description) out.push(v.description.trim(), '');
-        if (v.flaw) out.push(`**Flaw:** ${oneLine(v.flaw)}`, '');
-        if (v.quote) out.push(`*“${oneLine(v.quote)}”*`, '');
-      });
-    }
-    if (n.isFractured) {
-      n.fracturePaths.forEach((p, pi) => {
-        out.push(`#### ⟡ Fracture Path ${pi + 1}${p.name ? `: ${p.name}` : ''} · ${fmt(pathCost(p))} Asc`);
-        if (p.description) out.push(`*${p.description.trim()}*`);
-        out.push('');
-        orderedFractures(p).forEach(({ f, depth }) => {
-          out.push(`##### ${'↳ '.repeat(depth)}${f.name || 'Unnamed'} · ${f.tier} (${fmt(tierCost(f.tier))} Asc)`);
-          if (f.cost) out.push(`**${f.cost}**`, '');
-          if (f.description) out.push(f.description.trim());
-          out.push('');
-        });
-      });
-    }
-    if (n.notes) out.push(`*✎ Designer note: ${oneLine(n.notes)}*`, '');
-  });
+  return out.join('\n');
+}
 
+const nodeIsEmpty = (n) => !n.name && !n.description && !n.isAugment && !n.isFractured;
+
+function nodeHeadingMd(n) {
+  if (nodeIsEmpty(n)) return `### ${n.level}. *Not written yet*`;
+  const tags = [n.isAugment ? 'Augmentation Node' : '', n.isFractured ? 'Fracture Node' : ''].filter(Boolean);
+  return `### ${n.level}. ${n.name || 'Unnamed'}${tags.length ? ` · [${tags.join(', ')}]` : ''}`;
+}
+
+/** Everything about a node below its heading. */
+function nodeBodyMd(c, n) {
+  if (nodeIsEmpty(n)) return '';
+  const out = [];
+  const tags = [n.isAugment ? 'Augmentation Node' : '', n.isFractured ? 'Fracture Node' : ''].filter(Boolean);
+  if (tags.length) out.push(`*${tags.join(' · ')}*`, '');
+  if (n.flavor) out.push(`*${n.flavor}*`, '');
+  const meta = [n.type && `*${n.type}*`, n.cost && n.cost !== n.type && `**${n.cost}**`].filter(Boolean).join(' · ');
+  if (meta) out.push(meta, '');
+  if (n.description) out.push(n.description.trim(), '');
+  if (n.grants) out.push('**In addition:**', n.grants.trim(), '');
+  if (n.isAugment) {
+    c.augmentations.forEach((a) => {
+      const v = n.augments.find((x) => x.augId === a.id);
+      if (!v || !(v.name || v.description)) return;
+      out.push(`#### ◆ ${a.name || 'Augmentation'}${v.name ? `: ${v.name}` : ''}`);
+      if (v.tagline) out.push(`*${v.tagline}*`, '');
+      const vmeta = [v.type && v.type !== n.type && `*${v.type}*`, v.cost && `**${v.cost}**`].filter(Boolean).join(' · ');
+      if (vmeta) out.push(vmeta, '');
+      if (v.appearance) out.push(...v.appearance.trim().split('\n').filter((l) => l.trim()).map((l) => `> ${l}`), '');
+      if (v.description) out.push(v.description.trim(), '');
+      if (v.flaw) out.push(`**Flaw:** ${oneLine(v.flaw)}`, '');
+      if (v.quote) out.push(`*“${oneLine(v.quote)}”*`, '');
+    });
+  }
+  if (n.isFractured) {
+    n.fracturePaths.forEach((p, pi) => {
+      out.push(`#### ⟡ Fracture Path ${pi + 1}${p.name ? `: ${p.name}` : ''} · ${fmt(pathCost(p))} Asc`);
+      if (p.description) out.push(`*${p.description.trim()}*`);
+      out.push('');
+      orderedFractures(p).forEach(({ f, depth }) => {
+        out.push(`##### ${'↳ '.repeat(depth)}${f.name || 'Unnamed'} · ${f.tier} (${fmt(tierCost(f.tier))} Asc)`);
+        if (f.cost) out.push(`**${f.cost}**`, '');
+        if (f.description) out.push(f.description.trim());
+        out.push('');
+      });
+    });
+  }
+  if (n.notes) out.push(`*✎ Designer note: ${oneLine(n.notes)}*`, '');
+  return out.join('\n');
+}
+
+function classFootMd(c) {
+  const out = [];
+  const k = classCosts(c);
   out.push('## Ascension Summary', '',
     `- All ${k.levels} core nodes: ${fmt(k.base)} Asc`,
     `- Augmentation nodes: ${k.augNodes} (${fmt(db.settings.costs.augmentNode)} Asc each)`,
@@ -1529,6 +1529,35 @@ function classToMd(c) {
     `- Everything: ${fmt(k.base + k.augTotal + k.fractureTotal)} Asc`, '');
   if (c.notes) out.push('## Designer Notes', '', para(c.notes));
   return out.join('\n');
+}
+
+
+function classToMd(c) {
+  const nodes = c.nodes.slice(0, maxLevel(c.kind)).map((n) => [nodeHeadingMd(n), nodeBodyMd(c, n).replace(/^\*[^\n]*Node\*\n\n/, '')].filter(Boolean).join('\n'));
+  return [classHeadMd(c), '## Core Nodes', '', ...nodes.map((x) => x + '\n'), classFootMd(c)].join('\n');
+}
+
+const previewKey = (c, n) => `${c.id}:pv:${n.level}`;
+
+/** Class preview: each Core Node is a drop-down whose closed bar shows only its name. */
+function renderClassPreview(c) {
+  const nodes = c.nodes.slice(0, maxLevel(c.kind));
+  const setAll = (open) => { nodes.forEach((n) => (open ? ui.open.add(previewKey(c, n)) : ui.open.delete(previewKey(c, n)))); render(); };
+  const list = h('div', { class: 'pv-nodes' }, nodes.map((n) => {
+    const d = h('details', { class: 'pv-node' + (nodeIsEmpty(n) ? ' empty' : '') });
+    if (ui.open.has(previewKey(c, n))) d.open = true;
+    d.addEventListener('toggle', () => { if (d.open) ui.open.add(previewKey(c, n)); else ui.open.delete(previewKey(c, n)); });
+    d.append(h('summary', {}, n.name || (nodeIsEmpty(n) ? `Level ${n.level} — not written yet` : 'Unnamed node')),
+      h('div', { class: 'pv-node-body', html: mdToHtml(nodeBodyMd(c, n) || '*Nothing written for this node yet.*') }));
+    return d;
+  }));
+  return h('div', { class: 'preview' },
+    h('div', { html: mdToHtml(classHeadMd(c)) }),
+    h('div', { class: 'pv-nodes-head' }, h('h2', {}, 'Core Nodes'),
+      h('button', { class: 'small', onclick: () => setAll(true) }, 'Expand all'),
+      h('button', { class: 'small', onclick: () => setAll(false) }, 'Collapse all')),
+    list,
+    h('div', { html: mdToHtml(classFootMd(c)) }));
 }
 
 function itemToMd(it) {
