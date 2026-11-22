@@ -5,10 +5,9 @@
 'use strict';
 
 const STORAGE_KEY = 'rpg-forge-data-v1';
-const DATA_VERSION = 1;
+const DATA_VERSION = 2;
 
 // Attack attributes are fixed by the game rules.
-const ATTACK_ATTRIBUTES = ['Strength', 'Dexterity', 'Wittyness', 'Intelligence'];
 const CLASS_KINDS = { combat: { label: 'Combat Class', levels: 20 }, noncombat: { label: 'Non-Combat Class', levels: 10 } };
 const COST_TYPES = ['Mana', 'UP'];
 const OVERVIEW_ID = '__overview__'; // pinned "Magic Overview" entry in the Schools tab
@@ -21,23 +20,38 @@ const fmt = (n) => Number(n || 0).toLocaleString();
  * Data model
  * ==================================================================== */
 
+const FRACTURE_TIERS = ['Free', 'Lesser', 'Greater'];
+const TRAIT_RARITIES = ['Common', 'Uncommon', 'Rare', 'Legendary'];
+const MODULE_CATEGORIES = ['Support Module', 'Weapon Module', 'Advanced Support Module', 'Advanced Weapon Module', 'Core'];
+
 function defaultSettings() {
   return {
-    nodeTypes: ['Action', 'Reaction', 'Attack Action', 'Attack Reaction', 'Passive', 'Unique Ability'],
+    nodeTypes: ['Action', 'Bonus Action', 'Reaction', 'Attack Action', 'Attack Reaction', 'Passive', 'Core Passive',
+      'Core Class Mechanic', 'Unique Ability', 'Action Modifier', 'Special Action', 'Spellcasting', 'Capstone'],
     attackNodeTypes: ['Attack Action', 'Attack Reaction'],
     itemActionTypes: ['Attack Action', 'Reaction', 'Special Attack', 'Action', 'Passive'],
-    costs: { classNode: 500, augmentNode: 500, firstFracture: 500, additionalFracture: 250, masterFracture: 500 },
+    attackTypes: ['Graceful', 'Charm/PSI', 'Might', 'Keen', 'Athose', 'Heft', 'Finesse'],
+    damageTypes: ['Slashing', 'Piercing', 'Puncture', 'Bludgeon', 'Impact', 'Bleed', 'Fire', 'Cold', 'Electric', 'Plasma',
+      'Force', 'Explosive', 'Psychic', 'Psi', 'Divine', 'Radiant', 'Necrotic', 'True'],
+    costs: { classNode: 500, augmentNode: 0, fractureFree: 0, fractureLesser: 250, fractureGreater: 500 },
   };
 }
 
 const maxLevel = (kind) => (CLASS_KINDS[kind] || CLASS_KINDS.combat).levels;
 
 function newNode(level) {
-  return { level, name: '', type: '', description: '', isAugment: false, augments: [], isFractured: false, fracturePaths: [] };
+  return {
+    level, name: '', type: '', flavor: '', cost: '', description: '', grants: '', notes: '',
+    isAugment: false, augments: [], isFractured: false, fracturePaths: [],
+  };
+}
+function newVariant(augId, type = '') {
+  return { augId, name: '', type, tagline: '', cost: '', appearance: '', description: '', flaw: '', quote: '' };
 }
 function newClass(kind = 'combat') {
   return {
-    id: uid(), name: 'New Class', kind, summary: '', description: '', notes: '',
+    id: uid(), name: 'New Class', kind, summary: '', identity: '', notes: '',
+    resources: [], proficiencies: { armor: '', weapons: '', tools: '', statFocus: '' },
     augmentations: [],
     nodes: Array.from({ length: maxLevel(kind) }, (_, i) => newNode(i + 1)),
     updated: Date.now(),
@@ -45,7 +59,7 @@ function newClass(kind = 'combat') {
 }
 function newItem() {
   return {
-    id: uid(), name: 'New Item', description: '', attackAttribute: 'Strength',
+    id: uid(), name: 'New Item', description: '', attackAttribute: 'Might',
     actions: [{ id: uid(), name: '', type: 'Attack Action', description: '' }],
     unique: { name: '', description: '' },
     notes: '', updated: Date.now(),
@@ -73,76 +87,51 @@ function defaultSchools() {
 function newRule() {
   return { id: uid(), name: 'New Rule', category: '', summary: '', text: '', keywords: '', related: [], notes: '', updated: Date.now() };
 }
-/** Starter rules, drafted from the design notes so far. */
-function defaultRules() {
-  const cat = 'Character Progression';
-  const r = [
-    { name: 'Ascendancy Points', category: cat, keywords: 'exp, xp, experience, level up, leveling, advancement, power scaling, cost, spend',
-      summary: 'Characters grow by earning Ascendancy points and spending them on nodes.',
-      text: 'Players gain **Ascendancy points**, a measure of growing power (similar to experience). Points are spent to unlock nodes:\n\n- [[Class Nodes]]: 500 each\n- Augmentation nodes (see [[Augmentations]]): 500 each\n- [[Fractured Nodes]]: the first fracture on a path costs 500, each additional fracture on that path costs 250, and a Master Fracture costs 500' },
-    { name: 'Class Nodes', category: cat, keywords: 'level, levels, level up, class level, leveling, progression, 1-20, non-combat',
-      summary: 'Each class level is a class node that grants one new ability.',
-      text: 'Combat classes have 20 levels. Each level is a **class node** that grants something: an Action, Reaction, Attack Action, Attack Reaction, Passive, or Unique Ability. Each node costs 500 [[Ascendancy Points]].\n\nNon-combat classes have only 10 levels. They work the same way, but their nodes are not intended to be attacks.' },
-    { name: 'Augmentations', category: cat, keywords: 'augment, augmentation node, philosophy, variant, subclass',
-      summary: 'A permanent change in a practitioner\'s philosophy that alters certain class nodes.',
-      text: 'Each class has one or more **Augmentations**. An Augmentation is a fundamental change in the philosophy of the practitioner of the class.\n\n- A player may pick one Augmentation for their class at any time.\n- Once picked it cannot be changed, and a player cannot have more than one.\n- When the player reaches an **Augmentation node**, they take either the default node or their Augmentation\'s variant of it.\n- A node cannot be both an Augmentation node and one of the [[Fractured Nodes]].' },
-    { name: 'Fractured Nodes', category: cat, keywords: 'fracture, fractures, master fracture, path, branch, tree, upgrade',
-      summary: 'Some class nodes split into mini skill trees that build on the node.',
-      text: 'A **fractured node** has its own mini "class tree". It splits into one or more fracture paths, and each fracture modifies the node and builds on top of it.\n\n- A node may have several fracture paths.\n- There is at most one **Master Fracture** per fractured node, at the end of a path. It fundamentally changes the node and makes it stand out strongly.\n- Costs: the first fracture on a path is 500 [[Ascendancy Points]], each additional fracture is 250, and the Master Fracture is 500.' },
-    { name: 'Attack Attributes', category: 'Items', keywords: 'attribute, stat, stats, ability score, modifier, weapon, strength, dexterity, wittyness, intelligence',
-      summary: 'Every item attacks using one of four attributes.',
-      text: 'Every item has an **attack attribute**, which is always one of: Strength, Dexterity, Wittyness, or Intelligence.' },
-  ].map((x) => Object.assign(newRule(), x));
-  const byName = Object.fromEntries(r.map((x) => [x.name, x.id]));
-  const rel = { 'Ascendancy Points': ['Class Nodes', 'Augmentations', 'Fractured Nodes'], 'Class Nodes': ['Ascendancy Points'], Augmentations: ['Fractured Nodes'], 'Fractured Nodes': ['Ascendancy Points', 'Augmentations'] };
-  r.forEach((x) => { x.related = (rel[x.name] || []).map((n) => byName[n]); });
-  return r;
+const newProfile = () => ({ id: uid(), attackType: 'Might', ap: '', damage: '', damageType: '', crit: '', epic: '', range: '', talent: '' });
+function newWeapon() {
+  return { id: uid(), name: 'New Weapon', group: '', talent: '', description: '', profiles: [newProfile()], notes: '', updated: Date.now() };
 }
-const newFracturePath = () => ({ id: uid(), name: '', description: '', fractures: [], master: null });
-const newFracture = () => ({ id: uid(), name: '', description: '' });
-
-function emptyDb() {
+function newTrait() {
+  return { id: uid(), name: 'New Trait', rarity: 'Common', effect: '', notes: '', updated: Date.now() };
+}
+function newModule() {
   return {
-    version: DATA_VERSION, settings: defaultSettings(), classes: [], items: [], spells: [],
-    schools: defaultSchools(), rules: defaultRules(), lore: { magicOverview: Object.assign({}, DEFAULT_MAGIC_OVERVIEW) },
+    id: uid(), name: 'New Module', category: 'Weapon Module', complexity: 1, visual: '', cost: '', effect: '',
+    execution: '', scaling: '', notes: '', updated: Date.now(),
+  };
+}
+const newFracturePath = () => ({ id: uid(), name: '', description: '', fractures: [] });
+const newFracture = (requires = '') => ({ id: uid(), name: '', tier: 'Lesser', cost: '', requires, description: '' });
+
+/** The AOE content generated from the design notes (js/aoe-data.js), as fresh copies. */
+function seedContent() {
+  const seed = typeof AOE_SEED !== 'undefined' ? clone(AOE_SEED) : {};
+  return {
+    classes: seed.classes || [], rules: seed.rules || [], weapons: seed.weapons || [],
+    traits: seed.traits || [], modules: seed.modules || [],
   };
 }
 
-function exampleDb() {
-  const db = emptyDb();
-  const c = newClass('combat');
-  c.name = 'Example: Ember Knight';
-  c.summary = 'A frontline fighter who channels inner flame through their blade.';
-  const augA = { id: uid(), name: 'Cinder Oath', philosophy: 'The flame is a burden to be contained. Power is drawn inward, favoring endurance over destruction.' };
-  c.augmentations.push(augA);
-  c.nodes[0] = Object.assign(c.nodes[0], { name: 'Kindled Strike', type: 'Attack Action', description: 'Make a melee attack. On hit, deal +1d4 fire damage.' });
-  c.nodes[1] = Object.assign(c.nodes[1], { name: 'Heat Shimmer', type: 'Reaction', description: 'When targeted by a ranged attack, impose disadvantage.' });
-  c.nodes[2] = Object.assign(c.nodes[2], {
-    name: 'Burning Resolve', type: 'Passive', description: 'You gain +1 to all saves while above half health.',
-    isAugment: true,
-    augments: [{ augId: augA.id, name: 'Smoldering Resolve', type: 'Passive', description: 'You gain +1 to all saves while BELOW half health, and regain 1 HP at the start of your turn.' }],
-  });
-  const path = newFracturePath();
-  path.name = 'Wildfire';
-  path.description = 'Kindled Strike spreads to nearby enemies.';
-  path.fractures.push({ id: uid(), name: 'Spark Jump', description: 'Fire damage also hits one enemy within 5ft of the target.' });
-  path.fractures.push({ id: uid(), name: 'Spreading Blaze', description: 'Spark Jump can now hit up to two additional enemies.' });
-  path.master = { name: 'Inferno Sweep', description: 'Kindled Strike becomes a cone attack. All creatures in a 15ft cone take the bonus fire damage.' };
-  c.nodes[0].isFractured = true;
-  c.nodes[0].fracturePaths.push(path);
-  db.classes.push(c);
+function emptyDb() {
+  const seed = seedContent();
+  return {
+    version: DATA_VERSION, settings: defaultSettings(), classes: seed.classes, items: [], spells: [],
+    schools: defaultSchools(), rules: seed.rules, weapons: seed.weapons, traits: seed.traits, modules: seed.modules,
+    lore: { magicOverview: Object.assign({}, DEFAULT_MAGIC_OVERVIEW) },
+  };
+}
 
+/** Small example item + spell (Settings → Add examples). */
+function exampleContent() {
   const it = newItem();
   it.name = 'Example: Duelist\'s Needle';
   it.description = 'A slender rapier with a pearl pommel that hums when danger is near.';
-  it.attackAttribute = 'Dexterity';
+  it.attackAttribute = 'Graceful';
   it.actions = [
-    { id: uid(), name: 'Thrust', type: 'Attack Action', description: '1d8 piercing damage.' },
+    { id: uid(), name: 'Thrust', type: 'Attack Action', description: '4 Piercing damage.' },
     { id: uid(), name: 'Riposte', type: 'Reaction', description: 'When a melee attack misses you, make a Thrust against the attacker.' },
   ];
   it.unique = { name: 'Danger Sense', description: 'The wielder cannot be surprised and always acts in the first round of combat.' };
-  db.items.push(it);
-
   const sp = newSpell();
   sp.name = 'Example: Searing Bolt';
   sp.school = 'Elementus';
@@ -153,16 +142,20 @@ function exampleDb() {
     { id: uid(), school: 'Vitalis', mechanical: 'Deals necrotic damage instead of fire. The caster may pay 1d6 HP to double the damage.', visual: 'A crimson bolt of the caster\'s own blood, boiling as it flies.' },
     { id: uid(), school: 'Umbrath', mechanical: 'Instead of Burning, roll 1d6 on hit: on a 1 the bolt rebounds on the caster; on a 6 the target is also teleported 15ft in a random direction.', visual: 'A crackling violet tear in reality that snaps shut on the target.' },
   ];
-  db.spells.push(sp);
-  return db;
+  return { items: [it], spells: [sp] };
 }
+
+const SEEDED_COLLECTIONS = ['classes', 'rules', 'weapons', 'traits', 'modules'];
 
 /** Fill in any missing fields so older / hand-edited data still works. */
 function normalizeDb(raw) {
   const db = Object.assign(emptyDb(), raw || {});
   db.settings = Object.assign(defaultSettings(), db.settings || {});
-  db.settings.costs = Object.assign(defaultSettings().costs, db.settings.costs || {});
-  delete db.settings.schools; // schools are now their own collection
+  const oldCosts = db.settings.costs || {};
+  db.settings.costs = Object.assign(defaultSettings().costs, oldCosts);
+  ['firstFracture', 'additionalFracture', 'masterFracture'].forEach((k) => delete db.settings.costs[k]);
+  if ('firstFracture' in oldCosts) db.settings.costs.augmentNode = 0; // old default (500) predates "Augmentation nodes cost 0"
+  delete db.settings.schools; // schools are their own collection
   if (!raw || !Array.isArray(raw.schools)) db.schools = defaultSchools();
   db.schools = db.schools.map((sc) => {
     const school = Object.assign(newSchool(), sc);
@@ -170,8 +163,8 @@ function normalizeDb(raw) {
     school.figures = (school.figures || []).map((f) => Object.assign({ id: uid(), name: '', description: '' }, f));
     return school;
   });
-  if (!raw || !Array.isArray(raw.rules)) db.rules = defaultRules();
-  db.rules = db.rules.map((r) => {
+  ['weapons', 'traits', 'modules'].forEach((k) => { if (!raw || !Array.isArray(raw[k])) db[k] = seedContent()[k]; });
+  db.rules = (db.rules || []).map((r) => {
     const rule = Object.assign(newRule(), r);
     rule.related = Array.isArray(rule.related) ? rule.related : [];
     return rule;
@@ -190,22 +183,51 @@ function normalizeDb(raw) {
     sp.adaptations = (sp.adaptations || []).map((a) => Object.assign({ id: uid(), school: '', mechanical: '', visual: '' }, a));
     return sp;
   });
+  db.weapons = db.weapons.map((w) => {
+    const wp = Object.assign(newWeapon(), w);
+    wp.profiles = (wp.profiles || []).map((p) => Object.assign(newProfile(), p));
+    return wp;
+  });
+  db.traits = db.traits.map((t) => Object.assign(newTrait(), t));
+  db.modules = db.modules.map((m) => Object.assign(newModule(), m));
   return db;
 }
+
+function normalizeFractures(p) {
+  const fp = Object.assign(newFracturePath(), p);
+  fp.fractures = (fp.fractures || []).map((f, i, arr) => {
+    const fr = Object.assign(newFracture(), f);
+    if (!FRACTURE_TIERS.includes(fr.tier)) fr.tier = 'Lesser';
+    if (fr.requires === undefined) fr.requires = i ? arr[i - 1].id : '';
+    return fr;
+  });
+  // Old format: one "master" fracture per path -> a Greater fracture at the end
+  if (fp.master) {
+    const last = fp.fractures[fp.fractures.length - 1];
+    fp.fractures.push(Object.assign(newFracture(last ? last.id : ''), {
+      name: fp.master.name, tier: 'Greater', description: fp.master.description,
+    }));
+  }
+  delete fp.master;
+  return fp;
+}
+
 function normalizeClass(c) {
   const cls = Object.assign(newClass(c.kind || 'combat'), c);
+  if (!cls.identity && cls.description) cls.identity = cls.description;
+  delete cls.description;
+  cls.resources = (cls.resources || []).map((r) => Object.assign({ id: uid(), name: '', description: '' }, r));
+  cls.proficiencies = Object.assign({ armor: '', weapons: '', tools: '', statFocus: '' }, cls.proficiencies || {});
   cls.augmentations = (cls.augmentations || []).map((a) => Object.assign({ id: uid(), name: '', philosophy: '' }, a));
   const max = maxLevel(cls.kind);
+  const src = c.nodes || [];
   const nodes = [];
   for (let i = 0; i < max; i++) {
-    const n = Object.assign(newNode(i + 1), (cls.nodes || [])[i] || {});
+    const old = src.find((x) => x && x.level === i + 1) || (src[i] && !src[i].level ? src[i] : {});
+    const n = Object.assign(newNode(i + 1), old);
     n.level = i + 1;
-    n.augments = (n.augments || []).map((v) => Object.assign({ augId: '', name: '', type: '', description: '' }, v));
-    n.fracturePaths = (n.fracturePaths || []).map((p) => {
-      const fp = Object.assign(newFracturePath(), p);
-      fp.fractures = (fp.fractures || []).map((f) => Object.assign(newFracture(), f));
-      return fp;
-    });
+    n.augments = (n.augments || []).map((v) => Object.assign(newVariant(''), v));
+    n.fracturePaths = (n.fracturePaths || []).map(normalizeFractures);
     nodes.push(n);
   }
   cls.nodes = nodes;
@@ -223,7 +245,7 @@ function load() {
   } catch (e) {
     console.error('Failed to load saved data', e);
   }
-  return exampleDb();
+  return emptyDb();
 }
 
 let saveTimer = null;
@@ -254,7 +276,7 @@ function setStatus(t) { document.getElementById('save-status').textContent = t; 
 let db = load();
 const ui = {
   tab: 'classes',
-  selected: { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null },
+  selected: { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null, weapons: null, traits: null, modules: null },
   mode: 'edit', // 'edit' | 'preview'
   search: '',
   open: new Set(), // open <details> keys
@@ -271,7 +293,7 @@ const COLLECTIONS = {
     label: 'Class', create: () => newClass('combat'), sub: (c) => `${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} levels`,
     fields: (c) => [[c.name, 3], [joinText(c.augmentations.map((a) => a.name), c.nodes.map((n) => n.name)), 2], [c.summary, 2],
       [joinText(c.description, c.notes, c.augmentations.map((a) => a.philosophy), c.nodes.map((n) => [n.type, n.description,
-        n.augments.map((v) => [v.name, v.description]), n.fracturePaths.map((p) => [p.name, p.description, p.fractures.map((f) => [f.name, f.description]), p.master && [p.master.name, p.master.description]])])), 1]],
+        n.flavor, n.grants, n.augments.map((v) => [v.name, v.tagline, v.appearance, v.description, v.flaw]), n.fracturePaths.map((p) => [p.name, p.description, p.fractures.map((f) => [f.name, f.description])])]), c.identity, c.resources.map((r) => [r.name, r.description])), 1]],
   },
   items: {
     label: 'Item', create: newItem, sub: (i) => `${i.attackAttribute || '—'} · ${i.actions.length} action(s)`,
@@ -290,6 +312,7 @@ const COLLECTIONS = {
   rules: {
     label: 'Rule', create: newRule, sub: (r) => r.summary || r.category || 'No summary',
     group: (r) => r.category || 'Uncategorized',
+    groupOrder: () => ['Character Progression', 'Core Rules', 'Combat', 'Conditions', 'Items', 'AG Discretion', 'Glossary', 'Glossary (needs definition)'],
     fields: (r) => [[r.name, 3], [r.keywords, 3], [r.category, 2], [r.summary, 1.5], [joinText(r.text, r.notes), 1]],
   },
 };
@@ -451,7 +474,9 @@ function renderList() {
     if (coll.group) {
       const groups = {};
       sorted.forEach((e) => (groups[coll.group(e)] = groups[coll.group(e)] || []).push(e));
-      Object.keys(groups).sort().forEach((g) => rows.push(heading(g), ...groups[g].map(item)));
+      const order = coll.groupOrder ? coll.groupOrder() : [];
+      const rank = (g) => (order.includes(g) ? order.indexOf(g) : order.length);
+      Object.keys(groups).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).forEach((g) => rows.push(heading(g), ...groups[g].map(item)));
     } else rows.push(...sorted.map(item));
   } else {
     const r = searchEntries(db[ui.tab], q, coll.fields);
@@ -504,6 +529,7 @@ function renderEditor() {
   else if (ui.tab === 'items') body = renderItemEditor(e);
   else if (ui.tab === 'schools') body = renderSchoolEditor(e);
   else if (ui.tab === 'rules') body = renderRuleEditor(e);
+  else if (SCHEMAS[ui.tab]) body = renderSchemaEditor(e, SCHEMAS[ui.tab]);
   else body = renderSpellEditor(e);
   return h('div', {}, head, body);
 }
@@ -542,10 +568,20 @@ function changeClassKind(c, kind) {
     return;
   }
   c.kind = kind;
-  const fixed = normalizeClass(c);
-  c.nodes = fixed.nodes;
+  c.nodes = normalizeClass(c).nodes;
   touch();
   render();
+}
+
+const tierCost = (tier) => Number(db.settings.costs['fracture' + tier] ?? 0);
+const pathCost = (p) => p.fractures.reduce((sum, f) => sum + tierCost(f.tier), 0);
+
+/** Depth of a fracture inside its path tree (0 = starts the path). */
+function fractureDepth(p, f, seen = new Set()) {
+  if (!f.requires || seen.has(f.id)) return 0;
+  seen.add(f.id);
+  const parent = p.fractures.find((x) => x.id === f.requires);
+  return parent ? 1 + fractureDepth(p, parent, seen) : 0;
 }
 
 function classCosts(c) {
@@ -555,26 +591,23 @@ function classCosts(c) {
     levels: nodes.length, base: nodes.length * s.classNode,
     augNodes: nodes.filter((n) => n.isAugment).length,
     fracturedNodes: nodes.filter((n) => n.isFractured).length,
-    paths: 0, fractures: 0, masters: 0, fractureTotal: 0, pathCosts: [],
+    paths: 0, fractures: 0, greater: 0, fractureTotal: 0,
   };
   nodes.forEach((n) => {
     if (!n.isFractured) return;
     n.fracturePaths.forEach((p) => {
-      const cost = pathCost(p);
       out.paths++;
       out.fractures += p.fractures.length;
-      if (p.master) out.masters++;
-      out.fractureTotal += cost;
-      out.pathCosts.push({ level: n.level, node: n.name, path: p.name, cost });
+      out.greater += p.fractures.filter((f) => f.tier === 'Greater').length;
+      out.fractureTotal += pathCost(p);
     });
   });
+  out.augTotal = out.augNodes * s.augmentNode;
   return out;
 }
-const fractureCost = (i) => (i === 0 ? db.settings.costs.firstFracture : db.settings.costs.additionalFracture);
-function pathCost(p) {
-  let cost = p.fractures.reduce((sum, _, i) => sum + fractureCost(i), 0);
-  if (p.master) cost += db.settings.costs.masterFracture;
-  return cost;
+
+function titleUpdater(obj) {
+  return () => { renderList(); const t = document.querySelector('.editor-head h1'); if (t) t.textContent = obj.name || '(unnamed)'; };
 }
 
 function renderClassEditor(c) {
@@ -587,33 +620,47 @@ function renderClassEditor(c) {
   wrap.append(h('div', { class: 'section' },
     h('h2', {}, 'Class Basics'),
     h('div', { class: 'row' },
-      field('Class name', c, 'name', { onInput: () => { renderList(); document.querySelector('.editor-head h1').textContent = c.name || '(unnamed)'; } }),
+      field('Class name', c, 'name', { onInput: titleUpdater(c) }),
       h('label', { class: 'field' }, h('span', {}, 'Class type'), kindSel)),
     field('Summary (one line)', c, 'summary', { placeholder: 'A short pitch for the class' }),
-    field('Description / fantasy', c, 'description', { type: 'textarea', rows: 4 }),
+    field('Class Identity', c, 'identity', { type: 'textarea', rows: 5 }),
   ));
+
+  // --- Resources & proficiencies
+  wrap.append(namedList('Base Resources', 'AP, RP, BP and any class resource (Combo, Chakra, Overdrive…).', c.resources, ['Resource', 'Description'], '', 2));
+  wrap.append(h('div', { class: 'section' },
+    h('h2', {}, 'Recommended Proficiencies'),
+    h('p', { class: 'hint' }, 'Granted on first class.'),
+    h('div', { class: 'row' },
+      field('Armor', c.proficiencies, 'armor'),
+      field('Weapons', c.proficiencies, 'weapons')),
+    h('div', { class: 'row' },
+      field('Tool Mastery', c.proficiencies, 'tools'),
+      field('Stat Focus', c.proficiencies, 'statFocus'))));
 
   // --- Augmentations
   const augSec = h('div', { class: 'section' },
-    h('h2', {}, 'Augmentations', h('span', { class: 'spacer' }),
-      h('button', { class: 'small', onclick: () => { c.augmentations.push({ id: uid(), name: '', philosophy: '' }); touch(); render(); } }, '+ Add Augmentation')),
-    h('p', { class: 'hint' }, 'A fundamental change in the practitioner\'s philosophy. A player picks at most one, permanently. On Augmentation nodes they take either the default node or their Augmentation\'s variant.'));
-  if (!c.augmentations.length) augSec.append(h('p', { class: 'muted' }, 'No augmentations yet.'));
+    h('h2', {}, 'Augmentation Paths', h('span', { class: 'spacer' }),
+      h('button', { class: 'small', onclick: () => { c.augmentations.push({ id: uid(), name: '', philosophy: '' }); touch(); render(); } }, '+ Add Augmentation Path')),
+    h('p', { class: 'hint' }, 'Philosophical approaches to the class (traditions, sins, graft-gods…). Paths are exclusive; augmenting is optional per node and costs 0. The AG may allow switching.'));
+  if (!c.augmentations.length) augSec.append(h('p', { class: 'muted' }, 'No augmentation paths yet.'));
   c.augmentations.forEach((a, i) => {
     augSec.append(h('div', { class: 'subcard aug' },
-      h('div', { class: 'subcard-head' }, h('strong', {}, `Augmentation ${i + 1}`),
+      h('div', { class: 'subcard-head' }, h('strong', {}, a.name || `Augmentation Path ${i + 1}`),
+        h('button', { class: 'small', onclick: () => { moveInArray(c.augmentations, i, -1); touch(); render(); } }, '↑'),
+        h('button', { class: 'small', onclick: () => { moveInArray(c.augmentations, i, 1); touch(); render(); } }, '↓'),
         h('button', { class: 'small danger', onclick: () => removeAugmentation(c, a) }, 'Remove')),
       field('Name', a, 'name', { onInput: () => refreshNodeSummaries() }),
-      field('Philosophy / what changes', a, 'philosophy', { type: 'textarea' })));
+      field('Philosophy, restrictions & specialties', a, 'philosophy', { type: 'textarea', rows: 4 })));
   });
   wrap.append(augSec);
 
-  // --- Ascendancy costs
+  // --- Ascension costs
   wrap.append(renderCostSection(c));
 
   // --- Nodes
   const nodesSec = h('div', { class: 'section' },
-    h('h2', {}, `Class Nodes (Levels 1–${maxLevel(c.kind)})`, h('span', { class: 'spacer' }),
+    h('h2', {}, `Core Nodes (Levels 1–${maxLevel(c.kind)})`, h('span', { class: 'spacer' }),
       h('button', { class: 'small', onclick: () => { c.nodes.forEach((n) => ui.open.add(nodeKey(c, n))); render(); } }, 'Expand all'),
       h('button', { class: 'small', onclick: () => { c.nodes.forEach((n) => ui.open.delete(nodeKey(c, n))); render(); } }, 'Collapse all')),
     c.kind === 'noncombat' ? h('p', { class: 'hint' }, 'Non-combat class: attack node types are hidden.') : null);
@@ -626,7 +673,7 @@ function renderClassEditor(c) {
 }
 
 function removeAugmentation(c, a) {
-  if (!confirm(`Remove augmentation "${a.name || 'unnamed'}"? Its variants on every node are removed too.`)) return;
+  if (!confirm(`Remove augmentation path "${a.name || 'unnamed'}"? Its variants on every node are removed too.`)) return;
   c.augmentations = c.augmentations.filter((x) => x.id !== a.id);
   c.nodes.forEach((n) => { n.augments = n.augments.filter((v) => v.augId !== a.id); });
   touch();
@@ -638,15 +685,15 @@ function renderCostSection(c) {
   const s = db.settings.costs;
   const tile = (v, l) => h('div', { class: 'cost-tile' }, h('div', { class: 'v' }, v), h('div', { class: 'l' }, l));
   return h('div', { class: 'section', id: 'cost-section' },
-    h('h2', {}, 'Ascendancy Points'),
-    h('p', { class: 'hint' }, `Class & Augmentation nodes: ${fmt(s.classNode)} each · Fractures: ${fmt(s.firstFracture)} for the first on a path, ${fmt(s.additionalFracture)} for each additional · Master Fracture: ${fmt(s.masterFracture)} (editable in Settings).`),
+    h('h2', {}, 'Ascension Points'),
+    h('p', { class: 'hint' }, `Core node ${fmt(s.classNode)} · Augmentation node ${fmt(s.augmentNode)} · Fractures: Free ${fmt(s.fractureFree)}, Lesser ${fmt(s.fractureLesser)}, Greater ${fmt(s.fractureGreater)} (editable in Settings).`),
     h('div', { class: 'cost-grid' },
-      tile(fmt(k.base), `All ${k.levels} class nodes`),
+      tile(fmt(k.base), `All ${k.levels} core nodes`),
       tile(k.augNodes, 'Augmentation nodes'),
       tile(k.fracturedNodes, 'Fractured nodes'),
-      tile(`${k.paths} / ${k.fractures} / ${k.masters}`, 'Paths / fractures / masters'),
-      tile(fmt(k.fractureTotal), 'All fracture paths combined'),
-      tile(fmt(k.base + k.fractureTotal), 'Everything in this class')));
+      tile(`${k.paths} / ${k.fractures} / ${k.greater}`, 'Paths / fractures / greater'),
+      tile(fmt(k.fractureTotal), 'Every fracture combined'),
+      tile(fmt(k.base + k.augTotal + k.fractureTotal), 'Everything in this class')));
 }
 
 const nodeKey = (c, n) => `${c.id}:node:${n.level}`;
@@ -658,12 +705,13 @@ function nodeSummary(c, n) {
     h('span', { class: 'node-title' + (n.name ? '' : ' empty') }, n.name || 'Unnamed node'),
   ];
   if (n.type) bits.push(h('span', { class: 'badge type' }, n.type));
-  if (n.type && !types.includes(n.type)) bits.push(h('span', { class: 'badge warn', title: 'This type is not allowed for this class type' }, '⚠ type'));
-  if (n.isAugment) bits.push(h('span', { class: 'badge aug' }, `Augment ×${n.augments.filter((v) => c.augmentations.some((a) => a.id === v.augId)).length}`));
+  if (n.type && !types.includes(n.type)) bits.push(h('span', { class: 'badge warn', title: 'This type is not in the node type list for this class type' }, '⚠ type'));
+  if (n.cost) bits.push(h('span', { class: 'badge' }, n.cost.length > 34 ? n.cost.slice(0, 32) + '…' : n.cost));
+  if (n.isAugment) bits.push(h('span', { class: 'badge aug' }, `Augment ×${n.augments.filter((v) => c.augmentations.some((a) => a.id === v.augId) && (v.name || v.description)).length}`));
   if (n.isFractured) bits.push(h('span', { class: 'badge frac' }, `Fractured · ${n.fracturePaths.length} path(s)`));
-  if (n.isFractured && n.fracturePaths.some((p) => p.master)) bits.push(h('span', { class: 'badge cost' }, '★ Master'));
-  if (n.isFractured && n.fracturePaths.filter((p) => p.master).length > 1) bits.push(h('span', { class: 'badge warn' }, '⚠ >1 master'));
   if (n.isAugment && n.isFractured) bits.push(h('span', { class: 'badge warn' }, '⚠ augment + fractured'));
+  if (n.notes) bits.push(h('span', { class: 'badge note', title: n.notes }, '✎ note'));
+  if (!n.name && !n.description) bits.push(h('span', { class: 'badge' }, 'empty'));
   return bits;
 }
 
@@ -692,7 +740,12 @@ function renderNodeBody(c, n) {
     h('div', { class: 'row' },
       field('Node name', n, 'name', { onInput: refreshNodeSummaries }),
       field('Node type', n, 'type', { type: 'select', options: types, onInput: refreshNodeSummaries })),
-    field('Description / mechanics', n, 'description', { type: 'textarea', rows: 3 }),
+    h('div', { class: 'row' },
+      field('Flavor line', n, 'flavor', { placeholder: 'e.g. Pride does not retreat.' }),
+      field('Cost / frequency', n, 'cost', { placeholder: 'e.g. 1 AP | 1 BP | Cooldown 3 Rounds', onInput: refreshNodeSummaries })),
+    field('Mechanics', n, 'description', { type: 'textarea', rows: 6 }),
+    field('Grants ("In addition…": resource caps, spells, mana)', n, 'grants', { type: 'textarea', rows: 2 }),
+    field('Node notes (designer only)', n, 'notes', { type: 'textarea', rows: 2, onInput: refreshNodeSummaries }),
     h('div', {},
       checkbox('Augmentation node', n, 'isAugment', null, n.isFractured ? 'A node cannot be both — this is already a Fractured node.' : null),
       checkbox('Fractured node', n, 'isFractured', (on) => { if (on && !n.fracturePaths.length) n.fracturePaths.push(newFracturePath()); },
@@ -706,24 +759,32 @@ function renderNodeBody(c, n) {
   // Augmentation variants
   if (n.isAugment) {
     if (!c.augmentations.length) {
-      body.append(h('p', { class: 'hint' }, 'This class has no Augmentations yet — add one above to write its variant here.'));
+      body.append(h('p', { class: 'hint' }, 'This class has no Augmentation Paths yet — add one above to write its variant here.'));
     }
     c.augmentations.forEach((a) => {
       let v = n.augments.find((x) => x.augId === a.id);
-      if (!v) { v = { augId: a.id, name: '', type: n.type, description: '' }; n.augments.push(v); }
-      body.append(h('div', { class: 'subcard aug' },
-        h('div', { class: 'subcard-head' }, h('strong', {}, `Augmentation variant: ${a.name || 'unnamed augmentation'}`),
+      if (!v) { v = newVariant(a.id, n.type); n.augments.push(v); }
+      body.append(h('details', { class: 'subcard aug variant', open: !!(v.name || v.description) && n.augments.length <= 2 },
+        h('summary', {}, h('strong', {}, `${a.name || 'Unnamed path'}`), v.name ? ` — ${v.name}` : h('span', { class: 'muted' }, ' — not written yet'),
           h('span', { class: 'badge cost' }, `${fmt(db.settings.costs.augmentNode)} Asc`)),
         h('div', { class: 'row' },
           field('Variant name', v, 'name'),
           field('Variant type', v, 'type', { type: 'select', options: types })),
-        field('Variant description / mechanics', v, 'description', { type: 'textarea' })));
+        h('div', { class: 'row' },
+          field('Tagline', v, 'tagline', { placeholder: 'e.g. The warrior who demands blood.' }),
+          field('Cost / frequency', v, 'cost')),
+        field('Appearance / transformation', v, 'appearance', { type: 'textarea', rows: 2 }),
+        field('Mechanics', v, 'description', { type: 'textarea', rows: 5 }),
+        h('div', { class: 'row' },
+          field('Flaw', v, 'flaw', { type: 'textarea', rows: 2 }),
+          field('Closing quote', v, 'quote', { type: 'textarea', rows: 2 }))));
     });
   }
 
   // Fracture paths
   if (n.isFractured) {
-    body.append(h('p', { class: 'hint', style: 'margin-top:8px' }, 'A fractured node can have several paths, but only one Master Fracture across all of them.'));
+    body.append(h('p', { class: 'hint', style: 'margin-top:8px' },
+      'The first node of a path is Free; nodes attached to it are Lesser; Greater fractures are deep commitments. Use "Builds on" to branch (e.g. three shield disciplines all building on Stand the Line).'));
     n.fracturePaths.forEach((p, pi) => body.append(renderFracturePath(c, n, p, pi)));
     body.append(h('button', { class: 'small', onclick: () => { n.fracturePaths.push(newFracturePath()); touch(); render(); } }, '+ Add fracture path'));
   }
@@ -738,36 +799,40 @@ function renderFracturePath(c, n, p, pi) {
       h('button', { class: 'small', title: 'Move up', onclick: () => { moveInArray(n.fracturePaths, pi, -1); touch(); render(); } }, '↑'),
       h('button', { class: 'small', title: 'Move down', onclick: () => { moveInArray(n.fracturePaths, pi, 1); touch(); render(); } }, '↓'),
       h('button', { class: 'small danger', onclick: () => { if (confirm('Remove this fracture path?')) { n.fracturePaths.splice(pi, 1); touch(); render(); } } }, 'Remove path')),
-    h('div', { class: 'row' }, field('Path name', p, 'name'), field('Path theme', p, 'description', { placeholder: 'How this path modifies the node' })));
+    h('div', { class: 'row' }, field('Path name', p, 'name', { placeholder: 'e.g. Shield' }), field('Path theme', p, 'description', { placeholder: 'How this path modifies the node' })));
 
   p.fractures.forEach((f, fi) => {
-    card.append(h('div', { class: 'subcard' },
+    const depth = fractureDepth(p, f);
+    const parents = p.fractures.filter((x) => x.id !== f.id);
+    const reqSel = h('select', {}, h('option', { value: '' }, '— starts the path —'),
+      parents.map((x) => h('option', { value: x.id }, x.name || `Fracture ${p.fractures.indexOf(x) + 1}`)));
+    reqSel.value = f.requires || '';
+    reqSel.addEventListener('change', () => { f.requires = reqSel.value; touch(); render(); });
+    card.append(h('div', { class: `subcard tier-${f.tier.toLowerCase()}`, style: `margin-left:${Math.min(depth, 4) * 22}px` },
       h('div', { class: 'subcard-head' },
-        h('strong', {}, `Fracture ${fi + 1}`),
-        h('span', { class: 'badge cost' }, `${fmt(fractureCost(fi))} Asc`),
+        h('strong', {}, `${depth ? '↳ '.repeat(1) : ''}${f.name || `Fracture ${fi + 1}`}`),
+        h('span', { class: `badge tier tier-${f.tier.toLowerCase()}` }, `${f.tier} · ${fmt(tierCost(f.tier))} Asc`),
         h('button', { class: 'small', onclick: () => { moveInArray(p.fractures, fi, -1); touch(); render(); } }, '↑'),
         h('button', { class: 'small', onclick: () => { moveInArray(p.fractures, fi, 1); touch(); render(); } }, '↓'),
-        h('button', { class: 'small danger', onclick: () => { p.fractures.splice(fi, 1); touch(); render(); } }, 'Remove')),
-      field('Fracture name', f, 'name'),
-      field('What it adds / changes', f, 'description', { type: 'textarea', rows: 2 })));
+        h('button', { class: 'small danger', onclick: () => removeFracture(p, f) }, 'Remove')),
+      h('div', { class: 'row' },
+        field('Fracture name', f, 'name'),
+        field('Tier', f, 'tier', { type: 'select', options: FRACTURE_TIERS, blank: false, rerender: true }),
+        h('label', { class: 'field' }, h('span', {}, 'Builds on'), reqSel)),
+      field('Cost / frequency', f, 'cost', { placeholder: 'e.g. 1 RP | Cooldown 2 Rounds' }),
+      field('What it adds / changes', f, 'description', { type: 'textarea', rows: 3 })));
   });
-  const btns = h('div', { class: 'row' },
-    h('button', { class: 'small', onclick: () => { p.fractures.push(newFracture()); touch(); render(); } }, '+ Add fracture'));
-  const masterElsewhere = n.fracturePaths.find((x) => x !== p && x.master);
-  if (!p.master && !masterElsewhere) btns.append(h('button', { class: 'small', onclick: () => { p.master = { name: '', description: '' }; touch(); render(); } }, '★ Add Master Fracture'));
-  else if (!p.master) btns.append(h('span', { class: 'muted' }, `★ This node's Master Fracture is on "${masterElsewhere.name || 'another path'}".`));
-  card.append(btns);
-
-  if (p.master) {
-    card.append(h('div', { class: 'subcard master', style: 'margin-top:10px' },
-      h('div', { class: 'subcard-head' },
-        h('strong', {}, '★ Master Fracture'),
-        h('span', { class: 'badge cost' }, `${fmt(db.settings.costs.masterFracture)} Asc`),
-        h('button', { class: 'small danger', onclick: () => { p.master = null; touch(); render(); } }, 'Remove')),
-      field('Master fracture name', p.master, 'name'),
-      field('Fundamental change', p.master, 'description', { type: 'textarea', rows: 3 })));
-  }
+  const last = p.fractures[p.fractures.length - 1];
+  card.append(h('div', { class: 'row' },
+    h('button', { class: 'small', onclick: () => { const f = newFracture(last ? last.id : ''); if (!last) f.tier = 'Free'; p.fractures.push(f); touch(); render(); } }, '+ Add fracture')));
   return card;
+}
+
+function removeFracture(p, f) {
+  p.fractures.forEach((x) => { if (x.requires === f.id) x.requires = f.requires; });
+  p.fractures.splice(p.fractures.indexOf(f), 1);
+  touch();
+  render();
 }
 
 /* ======================================================================
@@ -781,7 +846,7 @@ function renderItemEditor(it) {
     h('h2', {}, 'Item Basics'),
     h('div', { class: 'row' },
       field('Item name', it, 'name', { onInput: () => { renderList(); document.querySelector('.editor-head h1').textContent = it.name || '(unnamed)'; } }),
-      field('Attack attribute', it, 'attackAttribute', { type: 'select', options: ATTACK_ATTRIBUTES, blank: false, onInput: renderList })),
+      field('Attack type', it, 'attackAttribute', { type: 'select', options: db.settings.attackTypes, blank: false, onInput: renderList })),
     field('Description', it, 'description', { type: 'textarea', rows: 3 })));
 
   const actSec = h('div', { class: 'section' },
@@ -873,7 +938,7 @@ function renderOverviewEditor() {
 }
 
 /** Editable list of {name, description} entries (traits, notable figures…). */
-function namedList(title, hint, arr, labels, cls = '') {
+function namedList(title, hint, arr, labels, cls = '', rows = 3) {
   const sec = h('div', { class: 'section' },
     h('h2', {}, title, h('span', { class: 'spacer' }),
       h('button', { class: 'small', onclick: () => { arr.push({ id: uid(), name: '', description: '' }); touch(); render(); } }, `+ Add`)),
@@ -885,7 +950,7 @@ function namedList(title, hint, arr, labels, cls = '') {
       h('button', { class: 'small', onclick: () => { moveInArray(arr, i, 1); touch(); render(); } }, '↓'),
       h('button', { class: 'small danger', onclick: () => { arr.splice(i, 1); touch(); render(); } }, 'Remove')),
     field(labels[0], t, 'name'),
-    field(labels[1], t, 'description', { type: 'textarea', rows: 3 }))));
+    field(labels[1], t, 'description', { type: 'textarea', rows }))));
   return sec;
 }
 
@@ -982,7 +1047,7 @@ function renderRuleEditor(r) {
       field('Category', r, 'category', { datalist: categories, placeholder: 'e.g. Combat, Character Progression', onInput: renderList })),
     field('Summary (one line)', r, 'summary', { placeholder: 'The rule in one sentence', onInput: renderList }),
     field('Full rule text', r, 'text', { type: 'textarea', rows: 10 }),
-    h('p', { class: 'hint' }, 'Formatting: **bold**, *italic*, "- " for bullet lists. Link another rule by writing its name in double brackets, like [[Ascendancy Points]]. Links work in Preview.'),
+    h('p', { class: 'hint' }, 'Formatting: **bold**, *italic*, "- " for bullet lists. Link another rule by writing its name in double brackets, like [[Ascension Points]] or [[Augmentations|a custom label]]. Links work in Preview.'),
     field('Keywords / aliases (comma separated)', r, 'keywords', { placeholder: 'e.g. grab, hold, restrain (words people might search for instead of the rule name)' })));
 
   // Related rules
@@ -1034,6 +1099,207 @@ function ruleToMd(r) {
 }
 
 /* ======================================================================
+ * Simple collections described by a form schema:
+ * Weapons, Weapon Traits, Mech Modules
+ * ==================================================================== */
+
+const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
+const sameName = (a, b) => normText(a) === normText(b);
+const traitByName = (name) => db.traits.find((t) => sameName(t.name, name));
+const weaponsWithTrait = (name) => db.weapons.filter((w) => sameName(w.talent, name) || w.profiles.some((p) => p.talent && sameName(p.talent, name)));
+const traitNames = () => db.traits.map((t) => t.name).sort();
+
+function openEntry(tab, entry, mode = 'edit') {
+  ui.tab = tab;
+  ui.selected[tab] = entry.id;
+  ui.mode = mode;
+  ui.search = '';
+  render();
+}
+const entryLink = (tab, e) => h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); openEntry(tab, e); } }, e.name || '(unnamed)');
+
+function weaponToMd(w) {
+  const out = [`# ${w.name}`, w.group ? `*${w.group}*` : '', ''];
+  if (w.description) out.push(para(w.description));
+  const anyRange = w.profiles.some((p) => p.range);
+  const anyTalent = w.profiles.some((p) => p.talent);
+  out.push(`| Attack Type | AP | Base Damage | Crit | Epic${anyRange ? ' | Range' : ''}${anyTalent ? ' | Talent' : ''} |`,
+    `|---|---|---|---|---${anyRange ? '|---' : ''}${anyTalent ? '|---' : ''}|`);
+  w.profiles.forEach((p) => out.push(`| ${p.attackType} | ${p.ap} | ${[p.damage, p.damageType].filter(Boolean).join(' ')} | ${p.crit} | ${p.epic}${anyRange ? ` | ${p.range}` : ''}${anyTalent ? ` | ${p.talent || w.talent}` : ''} |`));
+  out.push('');
+  uniq([w.talent, ...w.profiles.map((p) => p.talent)]).forEach((name) => {
+    const t = traitByName(name);
+    out.push(`**Specialized Talent: ⟨${name}⟩**${t ? ` *(${t.rarity})*: ${t.effect}` : ' *(not in the Weapon Traits list)*'}`, '');
+  });
+  if (w.notes) out.push('## Designer Notes', '', para(w.notes));
+  return out.join('\n');
+}
+
+function traitToMd(t) {
+  const ws = weaponsWithTrait(t.name);
+  const out = [`# ⟨${t.name}⟩`, `*${t.rarity}*`, '', para(t.effect)];
+  if (ws.length) out.push(`**Weapons with this talent:** ${ws.map((w) => w.name).join(', ')}`, '');
+  if (t.notes) out.push('## Designer Notes', '', para(t.notes));
+  return out.join('\n');
+}
+
+function moduleToMd(m) {
+  const out = [`# ${m.name}`, `*${m.category} · Complexity ${m.complexity}*`, ''];
+  if (m.cost) out.push(`**Activation / Cost:** ${m.cost}`, '');
+  if (m.visual) out.push(`> ${oneLine(m.visual)}`, '');
+  if (m.effect) out.push(`**Effect:** ${m.effect}`, '');
+  if (m.execution) out.push(`*${oneLine(m.execution)}*`, '');
+  if (m.scaling) out.push(`**Ascension Scaling:** ${m.scaling}`, '');
+  if (m.notes) out.push('## Designer Notes', '', para(m.notes));
+  return out.join('\n');
+}
+
+const SCHEMAS = {
+  weapons: {
+    label: 'Weapon', create: newWeapon,
+    sub: (w) => {
+      const p = w.profiles[0] || {};
+      return [uniq(w.profiles.map((x) => x.attackType)).join('/'), p.ap && `${p.ap} AP`, [p.damage, p.damageType].filter(Boolean).join(' '), w.talent && `⟨${w.talent}⟩`].filter(Boolean).join(' · ');
+    },
+    group: (w) => w.group || 'Ungrouped',
+    groupOrder: () => uniq(db.weapons.map((w) => w.group)),
+    fields: (w) => [[w.name, 3], [joinText(w.group, w.talent), 2], [joinText(w.description, w.notes, w.profiles.map((p) => [p.attackType, p.damageType, p.talent])), 1]],
+    form: [
+      { key: 'name', label: 'Weapon name', title: true },
+      { key: 'group', label: 'Weapon group', datalist: () => uniq(db.weapons.map((w) => w.group)) },
+      { key: 'talent', label: 'Specialized talent', type: 'select', options: traitNames, rerender: true },
+      { key: 'description', label: 'Description', type: 'textarea' },
+      {
+        key: 'profiles', label: 'Attack Profiles', type: 'list', create: newProfile,
+        hint: 'One profile per way of attacking (e.g. Long Sword has a Graceful and a Might profile).',
+        itemTitle: (p, i) => `${p.attackType || `Profile ${i + 1}`}${p.damage ? ` · ${p.damage} ${p.damageType}` : ''}`,
+        form: [
+          { key: 'attackType', label: 'Attack type', type: 'select', options: () => db.settings.attackTypes },
+          { key: 'ap', label: 'AP' },
+          { key: 'damage', label: 'Base damage' },
+          { key: 'damageType', label: 'Damage type', datalist: () => db.settings.damageTypes },
+          { key: 'crit', label: 'Crit' },
+          { key: 'epic', label: 'Epic' },
+          { key: 'range', label: 'Range' },
+          { key: 'talent', label: 'Talent (if different)', type: 'select', options: traitNames, blankLabel: '— same as weapon —' },
+        ],
+      },
+      { key: 'notes', label: 'Designer notes', type: 'textarea' },
+    ],
+    extra: (w) => {
+      const t = traitByName(w.talent);
+      if (!w.talent) return null;
+      return h('div', { class: 'section' }, h('h2', {}, `Specialized Talent: ⟨${w.talent}⟩`),
+        t ? h('p', {}, h('span', { class: 'badge type' }, t.rarity), ' ', t.effect, ' ', entryLink('traits', t))
+          : h('p', { class: 'badge warn' }, '⚠ This talent is not in the Weapon Traits list yet.'));
+    },
+    md: weaponToMd,
+  },
+  traits: {
+    label: 'Weapon Trait', create: newTrait,
+    sub: (t) => `${weaponsWithTrait(t.name).length} weapon(s) · ${oneLine(t.effect).slice(0, 60)}`,
+    group: (t) => t.rarity || 'No rarity',
+    groupOrder: () => TRAIT_RARITIES,
+    fields: (t) => [[t.name, 3], [t.rarity, 2], [joinText(t.effect, t.notes), 1]],
+    form: [
+      { key: 'name', label: 'Trait name', title: true, onRename: (t, oldName, newName) => {
+        db.weapons.forEach((w) => {
+          if (sameName(w.talent, oldName)) w.talent = newName;
+          w.profiles.forEach((p) => { if (p.talent && sameName(p.talent, oldName)) p.talent = newName; });
+        });
+      } },
+      { key: 'rarity', label: 'Rarity', type: 'select', options: () => TRAIT_RARITIES, onInput: () => renderList() },
+      { key: 'effect', label: 'Effect', type: 'textarea', rows: 3 },
+      { key: 'notes', label: 'Designer notes', type: 'textarea' },
+    ],
+    extra: (t) => {
+      const ws = weaponsWithTrait(t.name);
+      return h('div', { class: 'section' }, h('h2', {}, `Weapons with this talent (${ws.length})`),
+        ws.length ? h('ul', {}, ws.map((w) => h('li', {}, entryLink('weapons', w), h('span', { class: 'muted' }, ` · ${w.group}`)))) : h('p', { class: 'muted' }, 'None yet.'));
+    },
+    md: traitToMd,
+  },
+  modules: {
+    label: 'Mech Module', create: newModule,
+    sub: (m) => `Complexity ${m.complexity}${m.cost ? ` · ${m.cost}` : ''}`,
+    group: (m) => m.category || 'Uncategorized',
+    groupOrder: () => MODULE_CATEGORIES,
+    fields: (m) => [[m.name, 3], [joinText(m.category, m.cost), 2], [joinText(m.visual, m.effect, m.execution, m.scaling, m.notes), 1]],
+    form: [
+      { key: 'name', label: 'Module name', title: true },
+      { key: 'category', label: 'Category', type: 'select', options: () => MODULE_CATEGORIES, onInput: () => renderList() },
+      { key: 'complexity', label: 'Complexity', type: 'number', onInput: () => renderList() },
+      { key: 'cost', label: 'Activation / cost', onInput: () => renderList() },
+      { key: 'visual', label: 'Visual', type: 'textarea', rows: 2 },
+      { key: 'effect', label: 'Effect / attack', type: 'textarea', rows: 3 },
+      { key: 'execution', label: 'Execution (flavor)', type: 'textarea', rows: 2 },
+      { key: 'scaling', label: 'Ascension scaling', placeholder: 'e.g. Every 2500 Ascension, damage increases by +1.' },
+      { key: 'notes', label: 'Designer notes', type: 'textarea' },
+    ],
+    md: moduleToMd,
+  },
+};
+Object.assign(COLLECTIONS, SCHEMAS);
+
+/** Render form fields from a schema; short fields share rows. */
+function renderForm(obj, form, entry) {
+  const out = [];
+  let row = null;
+  const flushRow = () => { if (row) { out.push(row); row = null; } };
+  form.forEach((f) => {
+    const options = typeof f.options === 'function' ? f.options() : f.options;
+    const datalist = typeof f.datalist === 'function' ? f.datalist() : f.datalist;
+    if (f.type === 'list') {
+      flushRow();
+      out.push(renderListField(obj, f, entry));
+      return;
+    }
+    let onInput = f.onInput;
+    if (f.title) {
+      let prev = obj[f.key];
+      onInput = (v) => { if (f.onRename) f.onRename(obj, prev, v); prev = v; titleUpdater(obj)(); };
+    }
+    const el = field(f.label, obj, f.key, {
+      type: f.type || 'text', options, datalist, rows: f.rows, placeholder: f.placeholder, onInput, rerender: f.rerender,
+      blankLabel: f.blankLabel,
+    });
+    if (f.type === 'textarea') { flushRow(); out.push(el); return; }
+    if (!row) row = h('div', { class: 'row' });
+    row.append(el);
+    if (row.children.length >= 4) flushRow();
+  });
+  flushRow();
+  return out;
+}
+
+function renderListField(obj, f, entry) {
+  const arr = obj[f.key];
+  const sec = h('div', { class: 'section' },
+    h('h2', {}, f.label, h('span', { class: 'spacer' }),
+      h('button', { class: 'small', onclick: () => { arr.push(f.create()); touch(); render(); } }, '+ Add')),
+    f.hint ? h('p', { class: 'hint' }, f.hint) : null);
+  if (!arr.length) sec.append(h('p', { class: 'muted' }, 'None yet.'));
+  arr.forEach((item, i) => sec.append(h('div', { class: 'subcard' },
+    h('div', { class: 'subcard-head' }, h('strong', {}, f.itemTitle ? f.itemTitle(item, i) : `${i + 1}`),
+      h('button', { class: 'small', onclick: () => { moveInArray(arr, i, -1); touch(); render(); } }, '↑'),
+      h('button', { class: 'small', onclick: () => { moveInArray(arr, i, 1); touch(); render(); } }, '↓'),
+      h('button', { class: 'small danger', onclick: () => { arr.splice(i, 1); touch(); render(); } }, 'Remove')),
+    renderForm(item, f.form, entry))));
+  return sec;
+}
+
+function renderSchemaEditor(e, schema) {
+  const main = schema.form.filter((f) => f.type !== 'list' && f.key !== 'notes');
+  const lists = schema.form.filter((f) => f.type === 'list');
+  const notes = schema.form.find((f) => f.key === 'notes');
+  return h('div', {},
+    h('div', { class: 'section' }, h('h2', {}, schema.label), renderForm(e, main, e)),
+    schema.extra ? schema.extra(e) : null,
+    lists.map((f) => renderListField(e, f, e)),
+    notes ? h('div', { class: 'section' }, h('h2', {}, 'Designer Notes'), field('', e, 'notes', { type: 'textarea', rows: 3 })) : null);
+}
+
+/* ======================================================================
  * Settings
  * ==================================================================== */
 
@@ -1049,6 +1315,7 @@ function listEditor(label, key, hint) {
 
 function renderSettings() {
   const costs = db.settings.costs;
+  const total = SEEDED_COLLECTIONS.map((k) => `${db[k].length} ${k}`).join(', ');
   return h('div', { style: 'max-width:900px' },
     h('div', { class: 'editor-head' }, h('h1', {}, 'Settings')),
     h('div', { class: 'section' },
@@ -1058,29 +1325,52 @@ function renderSettings() {
         listEditor('Class node types', 'nodeTypes'),
         listEditor('Attack node types', 'attackNodeTypes', 'Hidden on Non-Combat classes.')),
       h('div', { class: 'row' },
-        listEditor('Item action types', 'itemActionTypes'),
-        h('div', { class: 'field' }, h('span', {}, 'Schools of magic'), h('small', { class: 'muted' }, 'Schools are now edited in the Schools tab.')))),
-    h('div', { class: 'section' },
-      h('h2', {}, 'Ascendancy Point Costs'),
+        listEditor('Attack types', 'attackTypes', 'Used by weapons and items (see the Attack Types rule).'),
+        listEditor('Damage types', 'damageTypes')),
       h('div', { class: 'row' },
-        field('Class node', costs, 'classNode', { type: 'number' }),
+        listEditor('Item action types', 'itemActionTypes'),
+        h('div', { class: 'field' }, h('span', {}, 'Schools of magic'), h('small', { class: 'muted' }, 'Schools are edited in the Schools tab.')))),
+    h('div', { class: 'section' },
+      h('h2', {}, 'Ascension Point Costs'),
+      h('div', { class: 'row' },
+        field('Core node', costs, 'classNode', { type: 'number' }),
         field('Augmentation node', costs, 'augmentNode', { type: 'number' }),
-        field('First fracture on a path', costs, 'firstFracture', { type: 'number' }),
-        field('Each additional fracture', costs, 'additionalFracture', { type: 'number' }),
-        field('Master fracture', costs, 'masterFracture', { type: 'number' }))),
+        field('Free fracture', costs, 'fractureFree', { type: 'number' }),
+        field('Lesser fracture', costs, 'fractureLesser', { type: 'number' }),
+        field('Greater fracture', costs, 'fractureGreater', { type: 'number' }))),
+    h('div', { class: 'section' },
+      h('h2', {}, 'AOE Content'),
+      h('p', { class: 'hint' }, 'The classes, rules, weapons, weapon traits and mech modules from your design notes (notes/ folder) are built into js/aoe-data.js. Reloading puts the original imported version back for those entries (same IDs are overwritten; anything you created yourself is kept).'),
+      h('button', { onclick: reloadSeed }, 'Reload AOE content from notes')),
     h('div', { class: 'section' },
       h('h2', {}, 'Data'),
-      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${db.classes.length} classes, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools, ${db.rules.length} rules.`),
+      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${total}, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools.`),
       h('div', { class: 'row' },
-        h('button', { onclick: () => { if (confirm('Add the example class, item and spell?')) { const ex = exampleDb(); db.classes.push(...ex.classes); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
-        h('button', { class: 'danger', onclick: resetAll }, 'Delete ALL data'))));
+        h('button', { onclick: () => { if (confirm('Add an example item and spell?')) { const ex = exampleContent(); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
+        h('button', { class: 'danger', onclick: resetAll }, 'Reset ALL data'))));
+}
+
+function reloadSeed() {
+  if (!confirm('Overwrite imported classes, rules, weapons, traits and modules with the versions from your notes? Edits you made to those entries will be lost (entries you created yourself are kept).')) return;
+  const seed = normalizeDb(Object.assign({}, seedContent(), { schools: db.schools }));
+  let n = 0;
+  SEEDED_COLLECTIONS.forEach((key) => {
+    seed[key].forEach((e) => {
+      const idx = db[key].findIndex((x) => x.id === e.id);
+      if (idx >= 0) db[key][idx] = e; else db[key].push(e);
+      n++;
+    });
+  });
+  save();
+  render();
+  alert(`Reloaded ${n} entries from the notes.`);
 }
 
 function resetAll() {
-  if (!confirm('Delete ALL classes, items and spells? Export a JSON backup first if unsure.')) return;
-  if (!confirm('Really delete everything?')) return;
+  if (!confirm('Reset ALL data to the starter content? Everything you added or changed is lost. Export a JSON backup first if unsure.')) return;
+  if (!confirm('Really reset everything?')) return;
   db = emptyDb();
-  ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null };
+  ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null, weapons: null, traits: null, modules: null };
   save();
   render();
 }
@@ -1092,55 +1382,99 @@ function resetAll() {
 const indent = (t) => String(t || '').split('\n').filter((l) => l.trim()).join('\n  ');
 const para = (t) => (t && t.trim() ? t.trim() + '\n' : '');
 
+const oneLine = (t) => String(t || '').replace(/\s*\n\s*/g, ' ').trim();
+
+/** Fractures in tree order (parents before the fractures that build on them). */
+function orderedFractures(p) {
+  const ids = new Set(p.fractures.map((f) => f.id));
+  const out = [];
+  const seen = new Set();
+  const visit = (f, depth) => {
+    if (seen.has(f.id)) return;
+    seen.add(f.id);
+    out.push({ f, depth });
+    p.fractures.filter((x) => x.requires === f.id).forEach((x) => visit(x, depth + 1));
+  };
+  p.fractures.filter((f) => !f.requires || !ids.has(f.requires)).forEach((f) => visit(f, 0));
+  p.fractures.forEach((f) => visit(f, 0)); // anything in a cycle
+  return out;
+}
+
 function classToMd(c) {
   const out = [];
   const k = classCosts(c);
-  out.push(`# ${c.name}`, `*${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} Levels*`, '');
+  out.push(`# ${c.name}`, `*${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} Core Nodes*`, '');
   if (c.summary) out.push(`**${c.summary}**`, '');
-  if (c.description) out.push(para(c.description));
+  if (c.identity) out.push('## Class Identity', '', para(c.identity));
+  if (c.resources.length) {
+    out.push('## Base Resources', '');
+    c.resources.forEach((r) => out.push(`- **${r.name || 'Resource'}:** ${oneLine(r.description)}`));
+    out.push('');
+  }
+  const pr = c.proficiencies;
+  const profs = [['Armor', pr.armor], ['Weapons', pr.weapons], ['Tool Mastery', pr.tools], ['Stat Focus', pr.statFocus]].filter((x) => x[1]);
+  if (profs.length) out.push('## Recommended Proficiencies', '*Granted on first class*', '', ...profs.map(([l, v]) => `- **${l}:** ${v}`), '');
 
   if (c.augmentations.length) {
-    out.push('## Augmentations', '');
-    c.augmentations.forEach((a) => out.push(`### ${a.name || 'Unnamed Augmentation'}`, para(a.philosophy)));
+    out.push('## Augmentation Paths', '');
+    c.augmentations.forEach((a) => out.push(`### ${a.name || 'Unnamed Path'}`, para(a.philosophy)));
   }
 
-  out.push('## Class Nodes', '');
+  out.push('## Core Nodes', '');
   c.nodes.slice(0, maxLevel(c.kind)).forEach((n) => {
-    const tags = [n.isAugment ? 'Augmentation Node' : '', n.isFractured ? 'Fractured Node' : ''].filter(Boolean);
-    out.push(`### Level ${n.level} — ${n.name || 'Unnamed'}${n.type ? ` *(${n.type})*` : ''}${tags.length ? ` · [${tags.join(', ')}]` : ''}`);
-    if (n.description) out.push(n.description.trim());
-    out.push('');
+    const tags = [n.isAugment ? 'Augmentation Node' : '', n.isFractured ? 'Fracture Node' : ''].filter(Boolean);
+    if (!n.name && !n.description && !tags.length) {
+      out.push(`### ${n.level}. *Not written yet*`, '');
+      return;
+    }
+    out.push(`### ${n.level}. ${n.name || 'Unnamed'}${tags.length ? ` · [${tags.join(', ')}]` : ''}`);
+    if (n.flavor) out.push(`*${n.flavor}*`, '');
+    const meta = [n.type && `*${n.type}*`, n.cost && n.cost !== n.type && `**${n.cost}**`].filter(Boolean).join(' · ');
+    if (meta) out.push(meta, '');
+    if (n.description) out.push(n.description.trim(), '');
+    if (n.grants) out.push('**In addition:**', n.grants.trim(), '');
     if (n.isAugment) {
       c.augmentations.forEach((a) => {
         const v = n.augments.find((x) => x.augId === a.id);
         if (!v || !(v.name || v.description)) return;
-        out.push(`> **${a.name || 'Augmentation'} variant: ${v.name || 'Unnamed'}**${v.type ? ` *(${v.type})*` : ''} — ${indent(v.description).replace(/\n {2}/g, ' ')}`, '');
+        out.push(`#### ◆ ${a.name || 'Augmentation'}${v.name ? `: ${v.name}` : ''}`);
+        if (v.tagline) out.push(`*${v.tagline}*`, '');
+        const vmeta = [v.type && v.type !== n.type && `*${v.type}*`, v.cost && `**${v.cost}**`].filter(Boolean).join(' · ');
+        if (vmeta) out.push(vmeta, '');
+        if (v.appearance) out.push(...v.appearance.trim().split('\n').filter((l) => l.trim()).map((l) => `> ${l}`), '');
+        if (v.description) out.push(v.description.trim(), '');
+        if (v.flaw) out.push(`**Flaw:** ${oneLine(v.flaw)}`, '');
+        if (v.quote) out.push(`*“${oneLine(v.quote)}”*`, '');
       });
     }
     if (n.isFractured) {
-      n.fracturePaths.forEach((p) => {
-        out.push(`#### Fracture Path: ${p.name || 'Unnamed'} (${fmt(pathCost(p))} Asc)`);
+      n.fracturePaths.forEach((p, pi) => {
+        out.push(`#### ⟡ Fracture Path ${pi + 1}${p.name ? `: ${p.name}` : ''} · ${fmt(pathCost(p))} Asc`);
         if (p.description) out.push(`*${p.description.trim()}*`);
         out.push('');
-        p.fractures.forEach((f, i) => out.push(`- **${i + 1}. ${f.name || 'Unnamed'}** (${fmt(fractureCost(i))} Asc) — ${indent(f.description)}`));
-        if (p.master) out.push(`- **★ Master: ${p.master.name || 'Unnamed'}** (${fmt(db.settings.costs.masterFracture)} Asc) — ${indent(p.master.description)}`);
-        out.push('');
+        orderedFractures(p).forEach(({ f, depth }) => {
+          out.push(`##### ${'↳ '.repeat(depth)}${f.name || 'Unnamed'} · ${f.tier} (${fmt(tierCost(f.tier))} Asc)`);
+          if (f.cost) out.push(`**${f.cost}**`, '');
+          if (f.description) out.push(f.description.trim());
+          out.push('');
+        });
       });
     }
+    if (n.notes) out.push(`*✎ Designer note: ${oneLine(n.notes)}*`, '');
   });
 
-  out.push('## Ascendancy Summary', '',
-    `- All ${k.levels} class nodes: ${fmt(k.base)} Asc`,
-    `- Augmentation nodes: ${k.augNodes}`,
-    `- Fractured nodes: ${k.fracturedNodes} (${k.paths} paths, ${k.fractures} fractures, ${k.masters} master fractures)`,
-    `- All fracture paths combined: ${fmt(k.fractureTotal)} Asc`,
-    `- Everything: ${fmt(k.base + k.fractureTotal)} Asc`, '');
+  out.push('## Ascension Summary', '',
+    `- All ${k.levels} core nodes: ${fmt(k.base)} Asc`,
+    `- Augmentation nodes: ${k.augNodes} (${fmt(db.settings.costs.augmentNode)} Asc each)`,
+    `- Fractured nodes: ${k.fracturedNodes} (${k.paths} paths, ${k.fractures} fractures, ${k.greater} Greater)`,
+    `- Every fracture combined: ${fmt(k.fractureTotal)} Asc`,
+    `- Everything: ${fmt(k.base + k.augTotal + k.fractureTotal)} Asc`, '');
   if (c.notes) out.push('## Designer Notes', '', para(c.notes));
   return out.join('\n');
 }
 
 function itemToMd(it) {
-  const out = [`# ${it.name}`, `*Attack Attribute: ${it.attackAttribute || '—'}*`, ''];
+  const out = [`# ${it.name}`, `*Attack Type: ${it.attackAttribute || '—'}*`, ''];
   if (it.description) out.push(para(it.description));
   out.push('## Actions', '');
   it.actions.forEach((a) => out.push(`- **${a.name || 'Unnamed'}**${a.type ? ` *(${a.type})*` : ''} — ${indent(a.description)}`));
@@ -1172,16 +1506,17 @@ function toMarkdown(tab, e) {
   if (tab === 'items') return itemToMd(e);
   if (tab === 'schools') return schoolToMd(e);
   if (tab === 'rules') return ruleToMd(e);
+  if (SCHEMAS[tab]) return SCHEMAS[tab].md(e);
   return spellToMd(e);
 }
 
 function allToMarkdown() {
   const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
-  const demote = (md) => md.replace(/^(#{1,3}) /gm, '#$1 ');
+  const demote = (md) => md.replace(/^(#{1,5}) /gm, '#$1 ');
   const parts = ['# RPG Design Forge Export', `*Exported ${new Date().toLocaleString()}*`, ''];
   const ov = db.lore.magicOverview;
   if (ov.text) parts.push(`# ${ov.title || 'Magic Overview'}`, '', para(ov.text));
-  [['Classes', 'classes'], ['Items', 'items'], ['Schools of Magic', 'schools'], ['Spells', 'spells'], ['Rules', 'rules']].forEach(([title, key]) => {
+  [['Classes', 'classes'], ['Items', 'items'], ['Weapons', 'weapons'], ['Weapon Traits', 'traits'], ['Mech Modules', 'modules'], ['Schools of Magic', 'schools'], ['Spells', 'spells'], ['Rules', 'rules']].forEach(([title, key]) => {
     if (!db[key].length) return;
     parts.push(`# ${title}`, '');
     db[key].slice().sort(byName).forEach((e) => parts.push(demote(toMarkdown(key, e)), '---', ''));
@@ -1195,28 +1530,60 @@ function escapeHtml(s) {
 function inlineMd(s) {
   return escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/\[\[(.+?)\]\]/g, (m, name) => `<a href="#" class="rule-link${findRuleByName(name, true) ? '' : ' missing'}" data-rule="${name}">${name}</a>`);
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/\[\[(.+?)\]\]/g, (m, inner) => {
+      const [target, label] = inner.split('|');
+      const t = target.trim();
+      return `<a href="#" class="rule-link${findRuleByName(t, true) ? '' : ' missing'}" data-rule="${t}">${(label || target).trim()}</a>`;
+    });
 }
+
+/** Small Markdown renderer: headings, paragraphs, nested "-" lists, tables, quotes, rules. */
 function mdToHtml(md) {
+  const lines = md.split('\n');
   let html = '';
-  let inList = false;
   let paraLines = [];
+  const stack = []; // indent widths of open <ul>s
   const flush = () => { if (paraLines.length) { html += '<p>' + paraLines.map(inlineMd).join('<br>') + '</p>'; paraLines = []; } };
-  const closeList = () => { if (inList) { html += '</li></ul>'; inList = false; } };
-  for (const line of md.split('\n')) {
+  const closeLists = (toIndent = -1) => {
+    while (stack.length && stack[stack.length - 1] > toIndent) { html += '</li></ul>'; stack.pop(); }
+  };
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
-    if (!line.trim()) { flush(); closeList(); continue; }
-    if (line.trim() === '---') { flush(); closeList(); html += '<hr>'; continue; }
-    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); closeList(); const l = Math.min(m[1].length, 6); html += `<h${l}>${inlineMd(m[2])}</h${l}>`; continue; }
-    if ((m = line.match(/^- (.*)$/))) { flush(); html += inList ? '</li><li>' : '<ul><li>'; inList = true; html += inlineMd(m[1]); continue; }
-    if (inList && /^ {2}\S/.test(line)) { html += '<br>' + inlineMd(line.trim()); continue; }
-    if ((m = line.match(/^> ?(.*)$/))) { flush(); closeList(); html += `<blockquote>${inlineMd(m[1])}</blockquote>`; continue; }
-    closeList();
+    if (!line.trim()) { flush(); closeLists(); continue; }
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      flush(); closeLists();
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+      i--;
+      const hasHead = rows.length > 1 && /^\s*\|[\s:|-]+\|\s*$/.test(rows[1]);
+      const head = hasHead ? `<thead><tr>${cells(rows[0]).map((c) => `<th>${inlineMd(c)}</th>`).join('')}</tr></thead>` : '';
+      const bodyRows = (hasHead ? rows.slice(2) : rows).map((r) => `<tr>${cells(r).map((c) => `<td>${inlineMd(c)}</td>`).join('')}</tr>`).join('');
+      html += `<table>${head}<tbody>${bodyRows}</tbody></table>`;
+      continue;
+    }
+    if (line.trim() === '---') { flush(); closeLists(); html += '<hr>'; continue; }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); closeLists(); const l = m[1].length; html += `<h${l}>${inlineMd(m[2])}</h${l}>`; continue; }
+    if ((m = line.match(/^(\s*)[-•]\s+(.*)$/))) {
+      flush();
+      const ind = m[1].length;
+      if (stack.length && ind <= stack[stack.length - 1]) {
+        closeLists(ind);
+        if (stack.length && stack[stack.length - 1] === ind) html += '</li><li>';
+        else { html += '<ul><li>'; stack.push(ind); }
+      } else { html += '<ul><li>'; stack.push(ind); }
+      html += inlineMd(m[2]);
+      continue;
+    }
+    if (stack.length && /^\s+\S/.test(line)) { html += '<br>' + inlineMd(line.trim()); continue; }
+    if ((m = line.match(/^> ?(.*)$/))) { flush(); closeLists(); html += `<blockquote>${inlineMd(m[1])}</blockquote>`; continue; }
+    closeLists();
     paraLines.push(line);
   }
   flush();
-  closeList();
+  closeLists();
   return html;
 }
 
@@ -1249,8 +1616,8 @@ function importJson(file) {
   reader.onload = () => {
     try {
       const incoming = normalizeDb(JSON.parse(reader.result));
-      const counts = { classes: 0, items: 0, spells: 0, schools: 0, rules: 0 };
-      ['classes', 'items', 'spells', 'schools', 'rules'].forEach((key) => {
+      const counts = { classes: 0, items: 0, spells: 0, schools: 0, rules: 0, weapons: 0, traits: 0, modules: 0 };
+      Object.keys(counts).forEach((key) => {
         incoming[key].forEach((e) => {
           const idx = db[key].findIndex((x) => x.id === e.id);
           if (idx >= 0) db[key][idx] = e; else db[key].push(e);
@@ -1260,7 +1627,7 @@ function importJson(file) {
       if (confirm('Also replace your Settings (lists & costs) and Magic Overview with the ones from this file?')) { db.settings = incoming.settings; db.lore = incoming.lore; }
       save();
       render();
-      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules. Entries with matching IDs were overwritten.`);
+      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules, ${counts.weapons} weapons, ${counts.traits} weapon traits, ${counts.modules} modules. Entries with matching IDs were overwritten.`);
     } catch (e) {
       alert('That file could not be read as RPG Design Forge JSON.\n\n' + e.message);
     }
@@ -1305,6 +1672,6 @@ document.getElementById('file-import').addEventListener('change', (ev) => {
 });
 
 // Select the first entry of each collection on startup.
-['classes', 'items', 'spells', 'rules'].forEach((k) => { if (db[k][0]) ui.selected[k] = db[k][0].id; });
+['classes', 'items', 'spells', 'rules', 'weapons', 'traits', 'modules'].forEach((k) => { if (db[k][0]) ui.selected[k] = db[k][0].id; });
 save();
 render();

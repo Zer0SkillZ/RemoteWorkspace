@@ -213,3 +213,19 @@ details.node .node-body { padding: 4px 14px 14px; }
 .chip button { border: none; background: none; padding: 0 6px; }
 .rule-link { color: var(--aug); text-decoration: underline dotted; }
 .rule-link.missing { color: var(--danger); }
+
+/* tables in previews */
+.preview table { border-collapse: collapse; margin: 8px 0 14px; width: 100%; font-size: 14px; }
+.preview th, .preview td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; }
+.preview th { background: var(--panel-2); color: var(--accent); }
+.preview h5 { margin: 12px 0 4px; font-size: 15px; }
+.preview ul ul { margin: 2px 0; }
+
+/* fracture tiers & variants */
+.badge.tier-free { color: var(--ok); border-color: var(--ok); }
+.badge.tier-lesser { color: var(--aug); border-color: var(--aug); }
+.badge.tier-greater { color: var(--accent); border-color: var(--accent); }
+.badge.note { color: var(--accent-2); border-color: var(--accent-2); }
+.subcard.tier-greater { border-left: 3px solid var(--accent); }
+details.variant > summary { cursor: pointer; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.tabs { flex-wrap: wrap; }
