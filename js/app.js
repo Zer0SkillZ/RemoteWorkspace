@@ -70,13 +70,41 @@ function defaultSchools() {
     figures: d.figures.map(([name, description]) => ({ id: uid(), name, description })),
   }));
 }
+function newRule() {
+  return { id: uid(), name: 'New Rule', category: '', summary: '', text: '', keywords: '', related: [], notes: '', updated: Date.now() };
+}
+/** Starter rules, drafted from the design notes so far. */
+function defaultRules() {
+  const cat = 'Character Progression';
+  const r = [
+    { name: 'Ascendancy Points', category: cat, keywords: 'exp, xp, experience, level up, leveling, advancement, power scaling, cost, spend',
+      summary: 'Characters grow by earning Ascendancy points and spending them on nodes.',
+      text: 'Players gain **Ascendancy points**, a measure of growing power (similar to experience). Points are spent to unlock nodes:\n\n- [[Class Nodes]]: 500 each\n- Augmentation nodes (see [[Augmentations]]): 500 each\n- [[Fractured Nodes]]: the first fracture on a path costs 500, each additional fracture on that path costs 250, and a Master Fracture costs 500' },
+    { name: 'Class Nodes', category: cat, keywords: 'level, levels, level up, class level, leveling, progression, 1-20, non-combat',
+      summary: 'Each class level is a class node that grants one new ability.',
+      text: 'Combat classes have 20 levels. Each level is a **class node** that grants something: an Action, Reaction, Attack Action, Attack Reaction, Passive, or Unique Ability. Each node costs 500 [[Ascendancy Points]].\n\nNon-combat classes have only 10 levels. They work the same way, but their nodes are not intended to be attacks.' },
+    { name: 'Augmentations', category: cat, keywords: 'augment, augmentation node, philosophy, variant, subclass',
+      summary: 'A permanent change in a practitioner\'s philosophy that alters certain class nodes.',
+      text: 'Each class has one or more **Augmentations**. An Augmentation is a fundamental change in the philosophy of the practitioner of the class.\n\n- A player may pick one Augmentation for their class at any time.\n- Once picked it cannot be changed, and a player cannot have more than one.\n- When the player reaches an **Augmentation node**, they take either the default node or their Augmentation\'s variant of it.\n- A node cannot be both an Augmentation node and one of the [[Fractured Nodes]].' },
+    { name: 'Fractured Nodes', category: cat, keywords: 'fracture, fractures, master fracture, path, branch, tree, upgrade',
+      summary: 'Some class nodes split into mini skill trees that build on the node.',
+      text: 'A **fractured node** has its own mini "class tree". It splits into one or more fracture paths, and each fracture modifies the node and builds on top of it.\n\n- A node may have several fracture paths.\n- There is at most one **Master Fracture** per fractured node, at the end of a path. It fundamentally changes the node and makes it stand out strongly.\n- Costs: the first fracture on a path is 500 [[Ascendancy Points]], each additional fracture is 250, and the Master Fracture is 500.' },
+    { name: 'Attack Attributes', category: 'Items', keywords: 'attribute, stat, stats, ability score, modifier, weapon, strength, dexterity, wittyness, intelligence',
+      summary: 'Every item attacks using one of four attributes.',
+      text: 'Every item has an **attack attribute**, which is always one of: Strength, Dexterity, Wittyness, or Intelligence.' },
+  ].map((x) => Object.assign(newRule(), x));
+  const byName = Object.fromEntries(r.map((x) => [x.name, x.id]));
+  const rel = { 'Ascendancy Points': ['Class Nodes', 'Augmentations', 'Fractured Nodes'], 'Class Nodes': ['Ascendancy Points'], Augmentations: ['Fractured Nodes'], 'Fractured Nodes': ['Ascendancy Points', 'Augmentations'] };
+  r.forEach((x) => { x.related = (rel[x.name] || []).map((n) => byName[n]); });
+  return r;
+}
 const newFracturePath = () => ({ id: uid(), name: '', description: '', fractures: [], master: null });
 const newFracture = () => ({ id: uid(), name: '', description: '' });
 
 function emptyDb() {
   return {
     version: DATA_VERSION, settings: defaultSettings(), classes: [], items: [], spells: [],
-    schools: defaultSchools(), lore: { magicOverview: Object.assign({}, DEFAULT_MAGIC_OVERVIEW) },
+    schools: defaultSchools(), rules: defaultRules(), lore: { magicOverview: Object.assign({}, DEFAULT_MAGIC_OVERVIEW) },
   };
 }
 
@@ -141,6 +169,12 @@ function normalizeDb(raw) {
     school.traits = (school.traits || []).map((t) => Object.assign({ id: uid(), name: '', description: '' }, t));
     school.figures = (school.figures || []).map((f) => Object.assign({ id: uid(), name: '', description: '' }, f));
     return school;
+  });
+  if (!raw || !Array.isArray(raw.rules)) db.rules = defaultRules();
+  db.rules = db.rules.map((r) => {
+    const rule = Object.assign(newRule(), r);
+    rule.related = Array.isArray(rule.related) ? rule.related : [];
+    return rule;
   });
   db.lore = Object.assign({}, db.lore || {});
   db.lore.magicOverview = Object.assign({}, DEFAULT_MAGIC_OVERVIEW, db.lore.magicOverview || {});
@@ -220,7 +254,7 @@ function setStatus(t) { document.getElementById('save-status').textContent = t; 
 let db = load();
 const ui = {
   tab: 'classes',
-  selected: { classes: null, items: null, spells: null, schools: OVERVIEW_ID },
+  selected: { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null },
   mode: 'edit', // 'edit' | 'preview'
   search: '',
   open: new Set(), // open <details> keys
@@ -229,11 +263,35 @@ const ui = {
 const schoolNames = () => db.schools.map((x) => x.name).filter(Boolean);
 const spellsInSchool = (name) => db.spells.filter((sp) => name && sp.school === name);
 
+const joinText = (...parts) => parts.flat(Infinity).filter(Boolean).join(' \n ');
+
+// `fields` feeds the search: [text, weight] pairs, name first.
 const COLLECTIONS = {
-  classes: { label: 'Class', create: () => newClass('combat'), sub: (c) => `${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} levels` },
-  items: { label: 'Item', create: newItem, sub: (i) => `${i.attackAttribute || '—'} · ${i.actions.length} action(s)` },
-  schools: { label: 'School', create: newSchool, sub: (sc) => `${sc.traits.length} trait(s) · ${spellsInSchool(sc.name).length} spell(s)` },
-  spells: { label: 'Spell', create: newSpell, sub: (s) => `${s.school || 'No school'} · ${s.cost || '?'} ${s.costType} · ${s.apCost || '?'} AP` },
+  classes: {
+    label: 'Class', create: () => newClass('combat'), sub: (c) => `${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} levels`,
+    fields: (c) => [[c.name, 3], [joinText(c.augmentations.map((a) => a.name), c.nodes.map((n) => n.name)), 2], [c.summary, 2],
+      [joinText(c.description, c.notes, c.augmentations.map((a) => a.philosophy), c.nodes.map((n) => [n.type, n.description,
+        n.augments.map((v) => [v.name, v.description]), n.fracturePaths.map((p) => [p.name, p.description, p.fractures.map((f) => [f.name, f.description]), p.master && [p.master.name, p.master.description]])])), 1]],
+  },
+  items: {
+    label: 'Item', create: newItem, sub: (i) => `${i.attackAttribute || '—'} · ${i.actions.length} action(s)`,
+    fields: (i) => [[i.name, 3], [joinText(i.unique.name, i.attackAttribute, i.actions.map((a) => a.name)), 2],
+      [joinText(i.description, i.unique.description, i.actions.map((a) => [a.type, a.description]), i.notes), 1]],
+  },
+  schools: {
+    label: 'School', create: newSchool, sub: (sc) => `${sc.traits.length} trait(s) · ${spellsInSchool(sc.name).length} spell(s)`,
+    fields: (sc) => [[sc.name, 3], [joinText(sc.traits.map((t) => t.name), sc.figures.map((f) => f.name)), 2],
+      [joinText(sc.description, sc.traits.map((t) => t.description), sc.spellTypes, sc.restrictions, sc.whoUses, sc.figures.map((f) => f.description), sc.notes), 1]],
+  },
+  spells: {
+    label: 'Spell', create: newSpell, sub: (s) => `${s.school || 'No school'} · ${s.cost || '?'} ${s.costType} · ${s.apCost || '?'} AP`,
+    fields: (s) => [[s.name, 3], [s.school, 2], [joinText(s.description, s.actionDescription, s.adaptations.map((a) => [a.school, a.mechanical, a.visual]), s.notes), 1]],
+  },
+  rules: {
+    label: 'Rule', create: newRule, sub: (r) => r.summary || r.category || 'No summary',
+    group: (r) => r.category || 'Uncategorized',
+    fields: (r) => [[r.name, 3], [r.keywords, 3], [r.category, 2], [r.summary, 1.5], [joinText(r.text, r.notes), 1]],
+  },
 };
 
 function current() {
@@ -289,9 +347,10 @@ function field(label, obj, key, opts = {}) {
     vals.forEach((o) => input.append(h('option', { value: o }, o)));
     input.value = obj[key] ?? '';
   } else {
-    input = h('input', { type, placeholder });
+    input = h('input', { type, placeholder, list: opts.datalist ? `dl-${key}` : null });
     input.value = obj[key] ?? '';
   }
+  const dl = opts.datalist ? h('datalist', { id: `dl-${key}` }, opts.datalist.map((o) => h('option', { value: o }))) : null;
   const evt = type === 'select' ? 'change' : 'input';
   input.addEventListener(evt, () => {
     obj[key] = type === 'number' ? (input.value === '' ? '' : Number(input.value)) : input.value;
@@ -300,7 +359,7 @@ function field(label, obj, key, opts = {}) {
     if (rerender) render();
   });
   if (!label) return input;
-  return h('label', { class: 'field ' + (cls || '') }, h('span', {}, label), input);
+  return h('label', { class: 'field ' + (cls || '') }, h('span', {}, label), input, dl);
 }
 
 function checkbox(label, obj, key, onChange, disabledReason) {
@@ -349,9 +408,13 @@ function renderSidebar() {
   const side = document.getElementById('sidebar');
   if (ui.tab === 'settings') { side.replaceChildren(); return; }
   const coll = COLLECTIONS[ui.tab];
-  const search = h('input', { type: 'search', placeholder: `Search ${ui.tab}…` });
+  const search = h('input', { type: 'search', id: 'side-search', placeholder: ui.tab === 'rules' ? 'Search rules (typos and close wording OK)…' : `Search ${ui.tab}…` });
   search.value = ui.search;
   search.addEventListener('input', () => { ui.search = search.value; renderList(); });
+  search.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ui.search.trim() && ui.firstResult) { ui.selected[ui.tab] = ui.firstResult.id; render(); }
+    if (ev.key === 'Escape') { ui.search = ''; search.value = ''; renderList(); }
+  });
 
   const actions = h('div', { class: 'side-actions' });
   if (ui.tab === 'classes') {
@@ -371,22 +434,41 @@ function renderList() {
   const list = document.getElementById('entry-list');
   if (!list) return;
   const coll = COLLECTIONS[ui.tab];
-  const q = ui.search.trim().toLowerCase();
-  const entries = db[ui.tab]
-    .filter((e) => !q || JSON.stringify(e).toLowerCase().includes(q))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const q = ui.search.trim();
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
+  const item = (e) => h('li', {
+    class: e.id === ui.selected[ui.tab] ? 'selected' : '',
+    onclick: () => { ui.selected[ui.tab] = e.id; render(); },
+  }, h('div', { class: 'entry-name' }, e.name || '(unnamed)'),
+  h('div', { class: 'entry-sub' }, q && ui.tab === 'rules' ? snippet(joinText(e.summary, e.text), q) : coll.sub(e)));
+  const heading = (t) => h('li', { class: 'list-heading' }, t);
+
+  const rows = [];
+  let found = 0;
+  if (!q) {
+    const sorted = db[ui.tab].slice().sort(byName);
+    found = sorted.length;
+    if (coll.group) {
+      const groups = {};
+      sorted.forEach((e) => (groups[coll.group(e)] = groups[coll.group(e)] || []).push(e));
+      Object.keys(groups).sort().forEach((g) => rows.push(heading(g), ...groups[g].map(item)));
+    } else rows.push(...sorted.map(item));
+  } else {
+    const r = searchEntries(db[ui.tab], q, coll.fields);
+    found = r.matches.length + r.similar.length;
+    ui.firstResult = (r.matches[0] || r.similar[0] || {}).entry || null;
+    if (r.matches.length) rows.push(heading(`Matches (${r.matches.length})`), ...r.matches.map((x) => item(x.entry)));
+    if (r.similar.length) rows.push(heading(r.matches.length ? 'Similar' : 'No exact match: closest results'), ...r.similar.map((x) => item(x.entry)));
+  }
   const pinned = [];
-  if (ui.tab === 'schools') {
+  if (ui.tab === 'schools' && !q) {
     pinned.push(h('li', {
       class: ui.selected.schools === OVERVIEW_ID ? 'selected' : '',
       onclick: () => { ui.selected.schools = OVERVIEW_ID; render(); },
     }, h('div', { class: 'entry-name' }, `📜 ${db.lore.magicOverview.title || 'Magic Overview'}`), h('div', { class: 'entry-sub' }, 'Magic system overview')));
   }
-  list.replaceChildren(...pinned, ...entries.map((e) => h('li', {
-    class: e.id === ui.selected[ui.tab] ? 'selected' : '',
-    onclick: () => { ui.selected[ui.tab] = e.id; render(); },
-  }, h('div', { class: 'entry-name' }, e.name || '(unnamed)'), h('div', { class: 'entry-sub' }, coll.sub(e)))));
-  if (!entries.length) list.append(h('li', { class: 'muted' }, q ? 'No matches.' : 'Nothing here yet.'));
+  list.replaceChildren(...pinned, ...rows);
+  if (!found) list.append(h('li', { class: 'muted' }, q ? 'Nothing similar found. Try other words.' : 'Nothing here yet.'));
 }
 
 function addEntry(entry) {
@@ -421,6 +503,7 @@ function renderEditor() {
   else if (ui.tab === 'classes') body = renderClassEditor(e);
   else if (ui.tab === 'items') body = renderItemEditor(e);
   else if (ui.tab === 'schools') body = renderSchoolEditor(e);
+  else if (ui.tab === 'rules') body = renderRuleEditor(e);
   else body = renderSpellEditor(e);
   return h('div', {}, head, body);
 }
@@ -436,6 +519,7 @@ function deleteEntry(e) {
   const extra = used ? `\n\n${used} spell(s) use this school and will be left with an unknown school.` : '';
   if (!confirm(`Delete "${e.name}"? This cannot be undone (unless you have a JSON backup).${extra}`)) return;
   db[ui.tab] = db[ui.tab].filter((x) => x.id !== e.id);
+  if (ui.tab === 'rules') db.rules.forEach((r) => { r.related = r.related.filter((id) => id !== e.id); });
   ui.selected[ui.tab] = null;
   save();
   render();
@@ -869,6 +953,87 @@ function schoolToMd(sc) {
 }
 
 /* ======================================================================
+ * Rules
+ * ==================================================================== */
+
+/** Exact (case-insensitive) name match, else the closest fuzzy match. */
+function findRuleByName(name, exactOnly = false) {
+  const n = normText(name);
+  const exact = db.rules.find((r) => normText(r.name) === n);
+  if (exact || exactOnly) return exact || null;
+  return bestMatch(db.rules, name, COLLECTIONS.rules.fields);
+}
+
+function openRule(rule, mode = 'preview') {
+  ui.tab = 'rules';
+  ui.selected.rules = rule.id;
+  ui.mode = mode;
+  ui.search = '';
+  render();
+}
+
+function renderRuleEditor(r) {
+  const categories = Array.from(new Set(db.rules.map((x) => x.category).filter(Boolean))).sort();
+  const wrap = h('div', {});
+  wrap.append(h('div', { class: 'section' },
+    h('h2', {}, 'Rule'),
+    h('div', { class: 'row' },
+      field('Rule name', r, 'name', { onInput: () => { renderList(); document.querySelector('.editor-head h1').textContent = r.name || '(unnamed)'; } }),
+      field('Category', r, 'category', { datalist: categories, placeholder: 'e.g. Combat, Character Progression', onInput: renderList })),
+    field('Summary (one line)', r, 'summary', { placeholder: 'The rule in one sentence', onInput: renderList }),
+    field('Full rule text', r, 'text', { type: 'textarea', rows: 10 }),
+    h('p', { class: 'hint' }, 'Formatting: **bold**, *italic*, "- " for bullet lists. Link another rule by writing its name in double brackets, like [[Ascendancy Points]]. Links work in Preview.'),
+    field('Keywords / aliases (comma separated)', r, 'keywords', { placeholder: 'e.g. grab, hold, restrain (words people might search for instead of the rule name)' })));
+
+  // Related rules
+  const rel = h('div', { class: 'section' }, h('h2', {}, 'Related Rules'));
+  const chips = h('div', { class: 'chips' });
+  r.related.map((id) => db.rules.find((x) => x.id === id)).filter(Boolean).forEach((other) => {
+    chips.append(h('span', { class: 'chip' },
+      h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); openRule(other, 'edit'); } }, other.name || '(unnamed)'),
+      h('button', { class: 'small', title: 'Remove link', onclick: () => { r.related = r.related.filter((x) => x !== other.id); touch(); render(); } }, '×')));
+  });
+  if (!chips.children.length) chips.append(h('span', { class: 'muted' }, 'None yet.'));
+  const addSel = h('select', {}, h('option', { value: '' }, '+ Link a related rule…'),
+    db.rules.filter((x) => x.id !== r.id && !r.related.includes(x.id)).sort((a, b) => a.name.localeCompare(b.name))
+      .map((x) => h('option', { value: x.id }, x.name || '(unnamed)')));
+  addSel.addEventListener('change', () => {
+    if (!addSel.value) return;
+    r.related.push(addSel.value);
+    const other = db.rules.find((x) => x.id === addSel.value);
+    if (other && !other.related.includes(r.id)) other.related.push(r.id); // links go both ways
+    touch();
+    render();
+  });
+  rel.append(chips, h('div', { style: 'max-width:360px;margin-top:10px' }, addSel));
+  wrap.append(rel);
+
+  // Rules that link here via [[...]]
+  const backlinks = db.rules.filter((x) => x.id !== r.id && new RegExp(`\\[\\[\\s*${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\]\\]`, 'i').test(x.text));
+  if (backlinks.length) {
+    wrap.append(h('div', { class: 'section' }, h('h2', {}, 'Mentioned In'),
+      h('ul', {}, backlinks.map((x) => h('li', {}, h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); openRule(x); } }, x.name))))));
+  }
+
+  wrap.append(h('div', { class: 'section' }, h('h2', {}, 'Designer Notes'),
+    field('', r, 'notes', { type: 'textarea', rows: 3 })));
+  return wrap;
+}
+
+function ruleToMd(r) {
+  const out = [`# ${r.name}`];
+  if (r.category) out.push(`*${r.category}*`);
+  out.push('');
+  if (r.summary) out.push(`**${r.summary.trim()}**`, '');
+  if (r.text) out.push(r.text.trim(), '');
+  const related = r.related.map((id) => db.rules.find((x) => x.id === id)).filter(Boolean);
+  if (related.length) out.push(`**Related:** ${related.map((x) => `[[${x.name}]]`).join(', ')}`, '');
+  if (r.keywords) out.push(`*Keywords: ${r.keywords}*`, '');
+  if (r.notes) out.push('## Designer Notes', '', para(r.notes));
+  return out.join('\n');
+}
+
+/* ======================================================================
  * Settings
  * ==================================================================== */
 
@@ -905,7 +1070,7 @@ function renderSettings() {
         field('Master fracture', costs, 'masterFracture', { type: 'number' }))),
     h('div', { class: 'section' },
       h('h2', {}, 'Data'),
-      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${db.classes.length} classes, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools.`),
+      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${db.classes.length} classes, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools, ${db.rules.length} rules.`),
       h('div', { class: 'row' },
         h('button', { onclick: () => { if (confirm('Add the example class, item and spell?')) { const ex = exampleDb(); db.classes.push(...ex.classes); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
         h('button', { class: 'danger', onclick: resetAll }, 'Delete ALL data'))));
@@ -915,7 +1080,7 @@ function resetAll() {
   if (!confirm('Delete ALL classes, items and spells? Export a JSON backup first if unsure.')) return;
   if (!confirm('Really delete everything?')) return;
   db = emptyDb();
-  ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID };
+  ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID, rules: null };
   save();
   render();
 }
@@ -1006,6 +1171,7 @@ function toMarkdown(tab, e) {
   if (tab === 'classes') return classToMd(e);
   if (tab === 'items') return itemToMd(e);
   if (tab === 'schools') return schoolToMd(e);
+  if (tab === 'rules') return ruleToMd(e);
   return spellToMd(e);
 }
 
@@ -1015,7 +1181,7 @@ function allToMarkdown() {
   const parts = ['# RPG Design Forge Export', `*Exported ${new Date().toLocaleString()}*`, ''];
   const ov = db.lore.magicOverview;
   if (ov.text) parts.push(`# ${ov.title || 'Magic Overview'}`, '', para(ov.text));
-  [['Classes', 'classes'], ['Items', 'items'], ['Schools of Magic', 'schools'], ['Spells', 'spells']].forEach(([title, key]) => {
+  [['Classes', 'classes'], ['Items', 'items'], ['Schools of Magic', 'schools'], ['Spells', 'spells'], ['Rules', 'rules']].forEach(([title, key]) => {
     if (!db[key].length) return;
     parts.push(`# ${title}`, '');
     db[key].slice().sort(byName).forEach((e) => parts.push(demote(toMarkdown(key, e)), '---', ''));
@@ -1029,7 +1195,8 @@ function escapeHtml(s) {
 function inlineMd(s) {
   return escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>');
+    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/\[\[(.+?)\]\]/g, (m, name) => `<a href="#" class="rule-link${findRuleByName(name, true) ? '' : ' missing'}" data-rule="${name}">${name}</a>`);
 }
 function mdToHtml(md) {
   let html = '';
@@ -1082,8 +1249,8 @@ function importJson(file) {
   reader.onload = () => {
     try {
       const incoming = normalizeDb(JSON.parse(reader.result));
-      const counts = { classes: 0, items: 0, spells: 0, schools: 0 };
-      ['classes', 'items', 'spells', 'schools'].forEach((key) => {
+      const counts = { classes: 0, items: 0, spells: 0, schools: 0, rules: 0 };
+      ['classes', 'items', 'spells', 'schools', 'rules'].forEach((key) => {
         incoming[key].forEach((e) => {
           const idx = db[key].findIndex((x) => x.id === e.id);
           if (idx >= 0) db[key][idx] = e; else db[key].push(e);
@@ -1093,7 +1260,7 @@ function importJson(file) {
       if (confirm('Also replace your Settings (lists & costs) and Magic Overview with the ones from this file?')) { db.settings = incoming.settings; db.lore = incoming.lore; }
       save();
       render();
-      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools. Entries with matching IDs were overwritten.`);
+      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools, ${counts.rules} rules. Entries with matching IDs were overwritten.`);
     } catch (e) {
       alert('That file could not be read as RPG Design Forge JSON.\n\n' + e.message);
     }
@@ -1110,6 +1277,21 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
   ui.search = '';
   render();
 }));
+document.getElementById('editor').addEventListener('click', (ev) => {
+  const a = ev.target.closest('.rule-link');
+  if (!a) return;
+  ev.preventDefault();
+  const name = a.dataset.rule;
+  const rule = findRuleByName(name);
+  if (rule) { openRule(rule); return; }
+  if (confirm(`There's no rule called "${name}". Create it now?`)) {
+    const r = newRule();
+    r.name = name;
+    db.rules.push(r);
+    save();
+    openRule(r, 'edit');
+  }
+});
 document.getElementById('btn-export-json').addEventListener('click', () => {
   download(`rpg-forge-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(db, null, 2), 'application/json');
 });
@@ -1123,6 +1305,6 @@ document.getElementById('file-import').addEventListener('change', (ev) => {
 });
 
 // Select the first entry of each collection on startup.
-['classes', 'items', 'spells'].forEach((k) => { if (db[k][0]) ui.selected[k] = db[k][0].id; });
+['classes', 'items', 'spells', 'rules'].forEach((k) => { if (db[k][0]) ui.selected[k] = db[k][0].id; });
 save();
 render();

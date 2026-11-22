@@ -202,3 +202,14 @@ details.node .node-body { padding: 4px 14px 14px; }
 
 .check.disabled { opacity: .45; cursor: not-allowed; }
 .section a { color: var(--aug); }
+
+.entry-list li.list-heading {
+  cursor: default; padding: 10px 10px 2px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--accent);
+}
+.entry-list li.list-heading:hover { background: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 2px 4px 2px 10px; }
+.chip button { border: none; background: none; padding: 0 6px; }
+.rule-link { color: var(--aug); text-decoration: underline dotted; }
+.rule-link.missing { color: var(--danger); }

@@ -37,6 +37,18 @@ Your work is saved automatically in the browser's local storage. **Use "Export J
 - The school dropdowns on spells come from this tab. Renaming a school updates every spell that uses it.
 - Each school page lists its native spells and the spells adapted from other schools.
 
+### Rules
+- Each rule has a name, category, one-line summary, full text, keywords/aliases, and related rules.
+- Starts with five rules drafted from your notes so far: Ascendancy Points, Class Nodes, Augmentations, Fractured Nodes and Attack Attributes.
+- Link rules inside the text with `[[Rule Name]]`. In Preview, clicking a link opens that rule. A link to a rule that doesn't exist shows in red and offers to create it.
+- Each rule lists the other rules that mention it ("Mentioned In").
+
+### Search (all tabs)
+- **Exact matches** come first, then **similar** results. When nothing matches exactly, the closest results are shown.
+- Vague search tolerates typos ("acsendency", "agumentation"), partial words ("fractur") and different word forms ("fractured" ≈ "fracture").
+- It also matches a rule's **keywords**, so "xp" or "level up" finds *Ascendancy Points*. Add keywords for the words players actually use.
+- Press **Enter** to open the top result and **Esc** to clear the search.
+
 ### Everywhere
 - Search, duplicate, delete
 - **Preview** mode: a formatted read-only view
@@ -60,6 +72,7 @@ index.html      page shell
 css/style.css   styling
 js/app.js       all app logic (data model, editors, export/import)
 js/schools-data.js  default Schools of Magic lore (seeds new data)
+js/search.js    exact + fuzzy search
 ```
 
 The JSON export is the source of truth. It is plain, readable JSON, so other tools (character sheets, a VTT exporter, etc.) can be built on top of it later.
