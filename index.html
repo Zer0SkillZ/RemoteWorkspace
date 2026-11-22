@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RPG Design Forge</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">⚒ RPG Design Forge</div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="classes">Classes</button>
+      <button data-tab="items">Items</button>
+      <button data-tab="spells">Spells</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="top-actions">
+      <span id="save-status" class="muted"></span>
+      <button id="btn-export-json" title="Download everything as a JSON backup">Export JSON</button>
+      <button id="btn-export-md" title="Download everything as a readable Markdown document">Export Markdown</button>
+      <label class="button" title="Load a JSON backup (merges by ID)">Import JSON
+        <input type="file" id="file-import" accept=".json,application/json" hidden>
+      </label>
+    </div>
+  </header>
+
+  <main id="app" class="layout">
+    <aside id="sidebar" class="sidebar"></aside>
+    <section id="editor" class="editor"></section>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
