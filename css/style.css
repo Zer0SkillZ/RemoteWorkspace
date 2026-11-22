@@ -199,3 +199,6 @@ details.node .node-body { padding: 4px 14px 14px; }
   .preview { border: none; background: #fff; color: #000; }
   .preview h1, .preview h2 { color: #000; }
 }
+
+.check.disabled { opacity: .45; cursor: not-allowed; }
+.section a { color: var(--aug); }

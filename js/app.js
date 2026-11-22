@@ -11,6 +11,7 @@ const DATA_VERSION = 1;
 const ATTACK_ATTRIBUTES = ['Strength', 'Dexterity', 'Wittyness', 'Intelligence'];
 const CLASS_KINDS = { combat: { label: 'Combat Class', levels: 20 }, noncombat: { label: 'Non-Combat Class', levels: 10 } };
 const COST_TYPES = ['Mana', 'UP'];
+const OVERVIEW_ID = '__overview__'; // pinned "Magic Overview" entry in the Schools tab
 
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -25,7 +26,6 @@ function defaultSettings() {
     nodeTypes: ['Action', 'Reaction', 'Attack Action', 'Attack Reaction', 'Passive', 'Unique Ability'],
     attackNodeTypes: ['Attack Action', 'Attack Reaction'],
     itemActionTypes: ['Attack Action', 'Reaction', 'Special Attack', 'Action', 'Passive'],
-    schools: ['Fire', 'Frost', 'Lightning', 'Earth', 'Wind', 'Light', 'Shadow', 'Arcane', 'Nature', 'Blood'],
     costs: { classNode: 500, augmentNode: 500, firstFracture: 500, additionalFracture: 250, masterFracture: 500 },
   };
 }
@@ -57,11 +57,27 @@ function newSpell() {
     costType: 'Mana', cost: '', apCost: '', adaptations: [], notes: '', updated: Date.now(),
   };
 }
+function newSchool() {
+  return {
+    id: uid(), name: 'New School', description: '', traits: [], spellTypes: '', restrictions: '', whoUses: '',
+    figures: [], notes: '', updated: Date.now(),
+  };
+}
+function defaultSchools() {
+  return DEFAULT_SCHOOLS.map((d) => Object.assign(newSchool(), {
+    name: d.name, description: d.description, spellTypes: d.spellTypes, restrictions: d.restrictions, whoUses: d.whoUses,
+    traits: d.traits.map(([name, description]) => ({ id: uid(), name, description })),
+    figures: d.figures.map(([name, description]) => ({ id: uid(), name, description })),
+  }));
+}
 const newFracturePath = () => ({ id: uid(), name: '', description: '', fractures: [], master: null });
 const newFracture = () => ({ id: uid(), name: '', description: '' });
 
 function emptyDb() {
-  return { version: DATA_VERSION, settings: defaultSettings(), classes: [], items: [], spells: [] };
+  return {
+    version: DATA_VERSION, settings: defaultSettings(), classes: [], items: [], spells: [],
+    schools: defaultSchools(), lore: { magicOverview: Object.assign({}, DEFAULT_MAGIC_OVERVIEW) },
+  };
 }
 
 function exampleDb() {
@@ -101,13 +117,13 @@ function exampleDb() {
 
   const sp = newSpell();
   sp.name = 'Example: Searing Bolt';
-  sp.school = 'Fire';
+  sp.school = 'Elementus';
   sp.description = 'A lance of white-hot flame leaps from the caster\'s palm.';
   sp.actionDescription = 'Ranged spell attack, 60ft. On hit: 2d6 fire damage and the target is Burning (1d4 at the start of its turn) for 1 round.';
   sp.cost = '3'; sp.apCost = '2';
   sp.adaptations = [
-    { id: uid(), school: 'Frost', mechanical: 'Deals cold damage. Instead of Burning, the target is Slowed for 1 round.', visual: 'A jagged spear of blue ice.' },
-    { id: uid(), school: 'Shadow', mechanical: 'Deals necrotic damage and the caster gains temporary HP equal to half the damage.', visual: 'A writhing tendril of darkness.' },
+    { id: uid(), school: 'Vitalis', mechanical: 'Deals necrotic damage instead of fire. The caster may pay 1d6 HP to double the damage.', visual: 'A crimson bolt of the caster\'s own blood, boiling as it flies.' },
+    { id: uid(), school: 'Umbrath', mechanical: 'Instead of Burning, roll 1d6 on hit: on a 1 the bolt rebounds on the caster; on a 6 the target is also teleported 15ft in a random direction.', visual: 'A crackling violet tear in reality that snaps shut on the target.' },
   ];
   db.spells.push(sp);
   return db;
@@ -118,6 +134,16 @@ function normalizeDb(raw) {
   const db = Object.assign(emptyDb(), raw || {});
   db.settings = Object.assign(defaultSettings(), db.settings || {});
   db.settings.costs = Object.assign(defaultSettings().costs, db.settings.costs || {});
+  delete db.settings.schools; // schools are now their own collection
+  if (!raw || !Array.isArray(raw.schools)) db.schools = defaultSchools();
+  db.schools = db.schools.map((sc) => {
+    const school = Object.assign(newSchool(), sc);
+    school.traits = (school.traits || []).map((t) => Object.assign({ id: uid(), name: '', description: '' }, t));
+    school.figures = (school.figures || []).map((f) => Object.assign({ id: uid(), name: '', description: '' }, f));
+    return school;
+  });
+  db.lore = Object.assign({}, db.lore || {});
+  db.lore.magicOverview = Object.assign({}, DEFAULT_MAGIC_OVERVIEW, db.lore.magicOverview || {});
   db.classes = (db.classes || []).map(normalizeClass);
   db.items = (db.items || []).map((i) => {
     const it = Object.assign(newItem(), i);
@@ -194,15 +220,19 @@ function setStatus(t) { document.getElementById('save-status').textContent = t; 
 let db = load();
 const ui = {
   tab: 'classes',
-  selected: { classes: null, items: null, spells: null },
+  selected: { classes: null, items: null, spells: null, schools: OVERVIEW_ID },
   mode: 'edit', // 'edit' | 'preview'
   search: '',
   open: new Set(), // open <details> keys
 };
 
+const schoolNames = () => db.schools.map((x) => x.name).filter(Boolean);
+const spellsInSchool = (name) => db.spells.filter((sp) => name && sp.school === name);
+
 const COLLECTIONS = {
   classes: { label: 'Class', create: () => newClass('combat'), sub: (c) => `${CLASS_KINDS[c.kind].label} · ${maxLevel(c.kind)} levels` },
   items: { label: 'Item', create: newItem, sub: (i) => `${i.attackAttribute || '—'} · ${i.actions.length} action(s)` },
+  schools: { label: 'School', create: newSchool, sub: (sc) => `${sc.traits.length} trait(s) · ${spellsInSchool(sc.name).length} spell(s)` },
   spells: { label: 'Spell', create: newSpell, sub: (s) => `${s.school || 'No school'} · ${s.cost || '?'} ${s.costType} · ${s.apCost || '?'} AP` },
 };
 
@@ -273,11 +303,11 @@ function field(label, obj, key, opts = {}) {
   return h('label', { class: 'field ' + (cls || '') }, h('span', {}, label), input);
 }
 
-function checkbox(label, obj, key, onChange) {
-  const input = h('input', { type: 'checkbox' });
+function checkbox(label, obj, key, onChange, disabledReason) {
+  const input = h('input', { type: 'checkbox', disabled: !!disabledReason && !obj[key] });
   input.checked = !!obj[key];
   input.addEventListener('change', () => { obj[key] = input.checked; touch(); if (onChange) onChange(input.checked); render(); });
-  return h('label', { class: 'check' }, input, label);
+  return h('label', { class: 'check' + (input.disabled ? ' disabled' : ''), title: input.disabled ? disabledReason : null }, input, label);
 }
 
 function moveInArray(arr, idx, dir) {
@@ -345,7 +375,14 @@ function renderList() {
   const entries = db[ui.tab]
     .filter((e) => !q || JSON.stringify(e).toLowerCase().includes(q))
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  list.replaceChildren(...entries.map((e) => h('li', {
+  const pinned = [];
+  if (ui.tab === 'schools') {
+    pinned.push(h('li', {
+      class: ui.selected.schools === OVERVIEW_ID ? 'selected' : '',
+      onclick: () => { ui.selected.schools = OVERVIEW_ID; render(); },
+    }, h('div', { class: 'entry-name' }, `📜 ${db.lore.magicOverview.title || 'Magic Overview'}`), h('div', { class: 'entry-sub' }, 'Magic system overview')));
+  }
+  list.replaceChildren(...pinned, ...entries.map((e) => h('li', {
     class: e.id === ui.selected[ui.tab] ? 'selected' : '',
     onclick: () => { ui.selected[ui.tab] = e.id; render(); },
   }, h('div', { class: 'entry-name' }, e.name || '(unnamed)'), h('div', { class: 'entry-sub' }, coll.sub(e)))));
@@ -362,6 +399,7 @@ function addEntry(entry) {
 
 function renderEditor() {
   if (ui.tab === 'settings') return renderSettings();
+  if (ui.tab === 'schools' && ui.selected.schools === OVERVIEW_ID) return renderOverviewEditor();
   const e = current();
   const coll = COLLECTIONS[ui.tab];
   if (!e) {
@@ -382,6 +420,7 @@ function renderEditor() {
   if (ui.mode === 'preview') body = h('div', { class: 'preview', html: mdToHtml(toMarkdown(ui.tab, e)) });
   else if (ui.tab === 'classes') body = renderClassEditor(e);
   else if (ui.tab === 'items') body = renderItemEditor(e);
+  else if (ui.tab === 'schools') body = renderSchoolEditor(e);
   else body = renderSpellEditor(e);
   return h('div', {}, head, body);
 }
@@ -393,7 +432,9 @@ function duplicateEntry(e) {
   addEntry(ui.tab === 'classes' ? normalizeClass(copy) : copy);
 }
 function deleteEntry(e) {
-  if (!confirm(`Delete "${e.name}"? This cannot be undone (unless you have a JSON backup).`)) return;
+  const used = ui.tab === 'schools' ? spellsInSchool(e.name).length : 0;
+  const extra = used ? `\n\n${used} spell(s) use this school and will be left with an unknown school.` : '';
+  if (!confirm(`Delete "${e.name}"? This cannot be undone (unless you have a JSON backup).${extra}`)) return;
   db[ui.tab] = db[ui.tab].filter((x) => x.id !== e.id);
   ui.selected[ui.tab] = null;
   save();
@@ -536,6 +577,9 @@ function nodeSummary(c, n) {
   if (n.type && !types.includes(n.type)) bits.push(h('span', { class: 'badge warn', title: 'This type is not allowed for this class type' }, '⚠ type'));
   if (n.isAugment) bits.push(h('span', { class: 'badge aug' }, `Augment ×${n.augments.filter((v) => c.augmentations.some((a) => a.id === v.augId)).length}`));
   if (n.isFractured) bits.push(h('span', { class: 'badge frac' }, `Fractured · ${n.fracturePaths.length} path(s)`));
+  if (n.isFractured && n.fracturePaths.some((p) => p.master)) bits.push(h('span', { class: 'badge cost' }, '★ Master'));
+  if (n.isFractured && n.fracturePaths.filter((p) => p.master).length > 1) bits.push(h('span', { class: 'badge warn' }, '⚠ >1 master'));
+  if (n.isAugment && n.isFractured) bits.push(h('span', { class: 'badge warn' }, '⚠ augment + fractured'));
   return bits;
 }
 
@@ -566,9 +610,14 @@ function renderNodeBody(c, n) {
       field('Node type', n, 'type', { type: 'select', options: types, onInput: refreshNodeSummaries })),
     field('Description / mechanics', n, 'description', { type: 'textarea', rows: 3 }),
     h('div', {},
-      checkbox('Augmentation node', n, 'isAugment'),
-      checkbox('Fractured node', n, 'isFractured', (on) => { if (on && !n.fracturePaths.length) n.fracturePaths.push(newFracturePath()); })),
+      checkbox('Augmentation node', n, 'isAugment', null, n.isFractured ? 'A node cannot be both — this is already a Fractured node.' : null),
+      checkbox('Fractured node', n, 'isFractured', (on) => { if (on && !n.fracturePaths.length) n.fracturePaths.push(newFracturePath()); },
+        n.isAugment ? 'A node cannot be both — this is already an Augmentation node.' : null),
+      h('span', { class: 'muted' }, 'A node can be an Augmentation node or a Fractured node, not both.')),
   );
+  if (n.isAugment && n.isFractured) {
+    body.append(h('p', { class: 'badge warn' }, '⚠ This node is marked as both Augmentation and Fractured — untick one.'));
+  }
 
   // Augmentation variants
   if (n.isAugment) {
@@ -590,6 +639,7 @@ function renderNodeBody(c, n) {
 
   // Fracture paths
   if (n.isFractured) {
+    body.append(h('p', { class: 'hint', style: 'margin-top:8px' }, 'A fractured node can have several paths, but only one Master Fracture across all of them.'));
     n.fracturePaths.forEach((p, pi) => body.append(renderFracturePath(c, n, p, pi)));
     body.append(h('button', { class: 'small', onclick: () => { n.fracturePaths.push(newFracturePath()); touch(); render(); } }, '+ Add fracture path'));
   }
@@ -619,7 +669,9 @@ function renderFracturePath(c, n, p, pi) {
   });
   const btns = h('div', { class: 'row' },
     h('button', { class: 'small', onclick: () => { p.fractures.push(newFracture()); touch(); render(); } }, '+ Add fracture'));
-  if (!p.master) btns.append(h('button', { class: 'small', onclick: () => { p.master = { name: '', description: '' }; touch(); render(); } }, '★ Add Master Fracture'));
+  const masterElsewhere = n.fracturePaths.find((x) => x !== p && x.master);
+  if (!p.master && !masterElsewhere) btns.append(h('button', { class: 'small', onclick: () => { p.master = { name: '', description: '' }; touch(); render(); } }, '★ Add Master Fracture'));
+  else if (!p.master) btns.append(h('span', { class: 'muted' }, `★ This node's Master Fracture is on "${masterElsewhere.name || 'another path'}".`));
   card.append(btns);
 
   if (p.master) {
@@ -686,7 +738,7 @@ function renderSpellEditor(sp) {
     h('h2', {}, 'Spell Basics'),
     h('div', { class: 'row' },
       field('Spell name', sp, 'name', { onInput: () => { renderList(); document.querySelector('.editor-head h1').textContent = sp.name || '(unnamed)'; } }),
-      field('School of magic', sp, 'school', { type: 'select', options: s.schools, onInput: renderList })),
+      field('School of magic', sp, 'school', { type: 'select', options: schoolNames(), rerender: true })),
     h('div', { class: 'row' },
       field('Cost type', sp, 'costType', { type: 'select', options: COST_TYPES, blank: false, onInput: renderList }),
       field('Mana / UP cost', sp, 'cost', { placeholder: 'e.g. 3', onInput: renderList }),
@@ -706,7 +758,7 @@ function renderSpellEditor(sp) {
         a.school && a.school === sp.school ? h('span', { class: 'badge warn' }, 'Same as spell\'s own school') : null,
         dup ? h('span', { class: 'badge warn' }, 'Duplicate school') : null,
         h('button', { class: 'small danger', onclick: () => { sp.adaptations.splice(i, 1); touch(); render(); } }, 'Remove')),
-      field('School', a, 'school', { type: 'select', options: s.schools.filter((x) => x !== sp.school), rerender: true }),
+      field('School', a, 'school', { type: 'select', options: schoolNames().filter((x) => x !== sp.school), rerender: true }),
       field('Mechanical changes', a, 'mechanical', { type: 'textarea', rows: 2 }),
       field('Visual changes', a, 'visual', { type: 'textarea', rows: 2 })));
   });
@@ -715,6 +767,105 @@ function renderSpellEditor(sp) {
   wrap.append(h('div', { class: 'section' }, h('h2', {}, 'Designer Notes'),
     field('', sp, 'notes', { type: 'textarea', rows: 3 })));
   return wrap;
+}
+
+/* ======================================================================
+ * Schools of magic
+ * ==================================================================== */
+
+function renderOverviewEditor() {
+  const ov = db.lore.magicOverview;
+  const head = h('div', { class: 'editor-head' },
+    h('h1', {}, ov.title || 'Magic Overview'),
+    h('button', { class: ui.mode === 'edit' ? 'active' : '', onclick: () => { ui.mode = 'edit'; render(); } }, '✎ Edit'),
+    h('button', { class: ui.mode === 'preview' ? 'active' : '', onclick: () => { ui.mode = 'preview'; render(); } }, '👁 Preview'));
+  const md = () => `# ${ov.title}\n\n${para(ov.text)}\n## Schools\n\n${db.schools.map((sc) => `- **${sc.name}** — ${(sc.description || '').trim()}`).join('\n')}`;
+  if (ui.mode === 'preview') return h('div', {}, head, h('div', { class: 'preview', html: mdToHtml(md()) }));
+  return h('div', {}, head, h('div', { class: 'section' },
+    h('h2', {}, 'Magic System Overview'),
+    h('p', { class: 'hint' }, 'The introduction to your magic system. Included at the top of the full Markdown export.'),
+    field('Title', ov, 'title', { onInput: () => { renderList(); document.querySelector('.editor-head h1').textContent = ov.title; } }),
+    field('Overview', ov, 'text', { type: 'textarea', rows: 8 })));
+}
+
+/** Editable list of {name, description} entries (traits, notable figures…). */
+function namedList(title, hint, arr, labels, cls = '') {
+  const sec = h('div', { class: 'section' },
+    h('h2', {}, title, h('span', { class: 'spacer' }),
+      h('button', { class: 'small', onclick: () => { arr.push({ id: uid(), name: '', description: '' }); touch(); render(); } }, `+ Add`)),
+    hint ? h('p', { class: 'hint' }, hint) : null);
+  if (!arr.length) sec.append(h('p', { class: 'muted' }, 'None yet.'));
+  arr.forEach((t, i) => sec.append(h('div', { class: 'subcard ' + cls },
+    h('div', { class: 'subcard-head' }, h('strong', {}, t.name || `${labels[0]} ${i + 1}`),
+      h('button', { class: 'small', onclick: () => { moveInArray(arr, i, -1); touch(); render(); } }, '↑'),
+      h('button', { class: 'small', onclick: () => { moveInArray(arr, i, 1); touch(); render(); } }, '↓'),
+      h('button', { class: 'small danger', onclick: () => { arr.splice(i, 1); touch(); render(); } }, 'Remove')),
+    field(labels[0], t, 'name'),
+    field(labels[1], t, 'description', { type: 'textarea', rows: 3 }))));
+  return sec;
+}
+
+function renderSchoolEditor(sc) {
+  const wrap = h('div', {});
+  let prevName = sc.name;
+  wrap.append(h('div', { class: 'section' },
+    h('h2', {}, 'School Basics'),
+    field('School name', sc, 'name', {
+      onInput: (name) => {
+        // Keep spells pointing at this school when it is renamed.
+        db.spells.forEach((sp) => {
+          if (prevName && sp.school === prevName) sp.school = name;
+          sp.adaptations.forEach((a) => { if (prevName && a.school === prevName) a.school = name; });
+        });
+        prevName = name;
+        renderList();
+        document.querySelector('.editor-head h1').textContent = name || '(unnamed)';
+      },
+    }),
+    field('Description', sc, 'description', { type: 'textarea', rows: 3 })));
+  wrap.append(namedList('Traits', 'The defining features of this school (e.g. Conduit Dependency, Fluid Casting).', sc.traits, ['Trait', 'Description'], 'aug'));
+  wrap.append(h('div', { class: 'section' },
+    h('h2', {}, 'Casting Profile'),
+    field('Types of spells', sc, 'spellTypes', { type: 'textarea', rows: 3 }),
+    field('Possible restrictions', sc, 'restrictions', { type: 'textarea', rows: 3 }),
+    field('Who would use this magic', sc, 'whoUses', { type: 'textarea', rows: 4 })));
+  wrap.append(namedList('Notable Figures', 'Legendary practitioners, founders, and their signature spells.', sc.figures, ['Name', 'Story'], 'master'));
+
+  const spells = spellsInSchool(sc.name);
+  const adapted = db.spells.filter((sp) => sp.adaptations.some((a) => a.school === sc.name));
+  const link = (sp) => h('li', {}, h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); ui.tab = 'spells'; ui.selected.spells = sp.id; ui.mode = 'edit'; render(); } }, sp.name || '(unnamed)'));
+  wrap.append(h('div', { class: 'section' },
+    h('h2', {}, 'Spells'),
+    h('p', { class: 'hint' }, 'Spells from the Spells tab that belong to, or have an adaptation for, this school.'),
+    h('strong', {}, `Native spells (${spells.length})`),
+    spells.length ? h('ul', {}, spells.map(link)) : h('p', { class: 'muted' }, 'None yet.'),
+    h('strong', {}, `Adapted from other schools (${adapted.length})`),
+    adapted.length ? h('ul', {}, adapted.map(link)) : h('p', { class: 'muted' }, 'None yet.')));
+
+  wrap.append(h('div', { class: 'section' }, h('h2', {}, 'Designer Notes'),
+    field('', sc, 'notes', { type: 'textarea', rows: 3 })));
+  return wrap;
+}
+
+function schoolToMd(sc) {
+  const out = [`# ${sc.name}`, ''];
+  if (sc.description) out.push(para(sc.description));
+  if (sc.traits.length) {
+    out.push('## Traits', '');
+    sc.traits.forEach((t) => out.push(`- **${t.name || 'Unnamed'}:** ${indent(t.description)}`));
+    out.push('');
+  }
+  if (sc.spellTypes) out.push('## Types of Spells', '', para(sc.spellTypes));
+  if (sc.restrictions) out.push('## Possible Restrictions', '', para(sc.restrictions));
+  if (sc.whoUses) out.push('## Who Would Use This Magic', '', para(sc.whoUses));
+  if (sc.figures.length) {
+    out.push('## Notable Figures', '');
+    sc.figures.forEach((f) => out.push(`### ${f.name || 'Unnamed'}`, para(f.description)));
+  }
+  const spells = spellsInSchool(sc.name);
+  if (spells.length) out.push('## Spells', '', ...spells.map((sp) => `- ${sp.name}`), '');
+  if (sc.notes) out.push('## Designer Notes', '', para(sc.notes));
+  return out.join('\n');
 }
 
 /* ======================================================================
@@ -743,7 +894,7 @@ function renderSettings() {
         listEditor('Attack node types', 'attackNodeTypes', 'Hidden on Non-Combat classes.')),
       h('div', { class: 'row' },
         listEditor('Item action types', 'itemActionTypes'),
-        listEditor('Schools of magic', 'schools'))),
+        h('div', { class: 'field' }, h('span', {}, 'Schools of magic'), h('small', { class: 'muted' }, 'Schools are now edited in the Schools tab.')))),
     h('div', { class: 'section' },
       h('h2', {}, 'Ascendancy Point Costs'),
       h('div', { class: 'row' },
@@ -754,7 +905,7 @@ function renderSettings() {
         field('Master fracture', costs, 'masterFracture', { type: 'number' }))),
     h('div', { class: 'section' },
       h('h2', {}, 'Data'),
-      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${db.classes.length} classes, ${db.items.length} items, ${db.spells.length} spells.`),
+      h('p', { class: 'hint' }, `Everything is stored in this browser. Export JSON regularly as a backup — clearing browser data deletes it. Currently: ${db.classes.length} classes, ${db.items.length} items, ${db.spells.length} spells, ${db.schools.length} schools.`),
       h('div', { class: 'row' },
         h('button', { onclick: () => { if (confirm('Add the example class, item and spell?')) { const ex = exampleDb(); db.classes.push(...ex.classes); db.items.push(...ex.items); db.spells.push(...ex.spells); save(); render(); } } }, 'Add examples'),
         h('button', { class: 'danger', onclick: resetAll }, 'Delete ALL data'))));
@@ -764,7 +915,7 @@ function resetAll() {
   if (!confirm('Delete ALL classes, items and spells? Export a JSON backup first if unsure.')) return;
   if (!confirm('Really delete everything?')) return;
   db = emptyDb();
-  ui.selected = { classes: null, items: null, spells: null };
+  ui.selected = { classes: null, items: null, spells: null, schools: OVERVIEW_ID };
   save();
   render();
 }
@@ -854,6 +1005,7 @@ function spellToMd(sp) {
 function toMarkdown(tab, e) {
   if (tab === 'classes') return classToMd(e);
   if (tab === 'items') return itemToMd(e);
+  if (tab === 'schools') return schoolToMd(e);
   return spellToMd(e);
 }
 
@@ -861,7 +1013,9 @@ function allToMarkdown() {
   const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
   const demote = (md) => md.replace(/^(#{1,3}) /gm, '#$1 ');
   const parts = ['# RPG Design Forge Export', `*Exported ${new Date().toLocaleString()}*`, ''];
-  [['Classes', 'classes'], ['Items', 'items'], ['Spells', 'spells']].forEach(([title, key]) => {
+  const ov = db.lore.magicOverview;
+  if (ov.text) parts.push(`# ${ov.title || 'Magic Overview'}`, '', para(ov.text));
+  [['Classes', 'classes'], ['Items', 'items'], ['Schools of Magic', 'schools'], ['Spells', 'spells']].forEach(([title, key]) => {
     if (!db[key].length) return;
     parts.push(`# ${title}`, '');
     db[key].slice().sort(byName).forEach((e) => parts.push(demote(toMarkdown(key, e)), '---', ''));
@@ -928,18 +1082,18 @@ function importJson(file) {
   reader.onload = () => {
     try {
       const incoming = normalizeDb(JSON.parse(reader.result));
-      const counts = { classes: 0, items: 0, spells: 0 };
-      ['classes', 'items', 'spells'].forEach((key) => {
+      const counts = { classes: 0, items: 0, spells: 0, schools: 0 };
+      ['classes', 'items', 'spells', 'schools'].forEach((key) => {
         incoming[key].forEach((e) => {
           const idx = db[key].findIndex((x) => x.id === e.id);
           if (idx >= 0) db[key][idx] = e; else db[key].push(e);
           counts[key]++;
         });
       });
-      if (confirm('Also replace your Settings (lists & costs) with the ones from this file?')) db.settings = incoming.settings;
+      if (confirm('Also replace your Settings (lists & costs) and Magic Overview with the ones from this file?')) { db.settings = incoming.settings; db.lore = incoming.lore; }
       save();
       render();
-      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells. Entries with matching IDs were overwritten.`);
+      alert(`Imported ${counts.classes} classes, ${counts.items} items, ${counts.spells} spells, ${counts.schools} schools. Entries with matching IDs were overwritten.`);
     } catch (e) {
       alert('That file could not be read as RPG Design Forge JSON.\n\n' + e.message);
     }

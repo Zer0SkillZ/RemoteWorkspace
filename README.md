@@ -16,7 +16,8 @@ Your work is saved automatically in the browser's local storage. **Use "Export J
 - **Combat classes**: 20 levels. **Non-combat classes**: 10 levels, and attack node types are hidden.
 - Each level is a **class node** with a name, a type (Action, Reaction, Attack Action, Attack Reaction, Passive, Unique Ability), and a description.
 - **Augmentations**: each class can have one or more. Each has a name and a philosophy. Marking a node as an **Augmentation node** gives you a variant of that node for every augmentation.
-- **Fractured nodes**: a node can have one or more **fracture paths**. Each path is an ordered list of fractures with an optional **★ Master Fracture** at the end.
+- **Fractured nodes**: a node can have one or more **fracture paths**. Each path is an ordered list of fractures. A node can have only **one ★ Master Fracture**, across all its paths.
+- A node can be an Augmentation node **or** a Fractured node, not both.
 - **Ascendancy point** totals are calculated per node, per path and per class.
 
 ### Items
@@ -30,11 +31,17 @@ Your work is saved automatically in the browser's local storage. **Use "Export J
 - Mana/UP cost and AP cost
 - **School adaptations**: per-school mechanical and visual changes
 
+### Schools of Magic
+- The **Aetheric Manipulation** overview, plus the 10 schools: Arcanation, Aetherion, Faunaris, Vitalis, Elementus, Rithex, Astralith, Umbrath, Syntharis and Animara.
+- Each school has a description, traits, types of spells, restrictions, who would use it, and notable figures (such as Thaldris Arcano and Shae’lara).
+- The school dropdowns on spells come from this tab. Renaming a school updates every spell that uses it.
+- Each school page lists its native spells and the spells adapted from other schools.
+
 ### Everywhere
 - Search, duplicate, delete
 - **Preview** mode: a formatted read-only view
 - Copy or download any entry as **Markdown** (for Google Docs, Discord, Homebrewery, Obsidian…), or export everything at once
-- **Settings**: edit the dropdown lists (node types, item action types, schools of magic) and the Ascendancy point costs
+- **Settings**: edit the dropdown lists (node types, item action types) and the Ascendancy point costs
 
 ## Ascendancy point costs (defaults, editable in Settings)
 
@@ -52,6 +59,7 @@ Your work is saved automatically in the browser's local storage. **Use "Export J
 index.html      page shell
 css/style.css   styling
 js/app.js       all app logic (data model, editors, export/import)
+js/schools-data.js  default Schools of Magic lore (seeds new data)
 ```
 
 The JSON export is the source of truth. It is plain, readable JSON, so other tools (character sheets, a VTT exporter, etc.) can be built on top of it later.
